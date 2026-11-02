@@ -2,9 +2,23 @@
 
 [中文](README.md) · [English](README.en.md)
 
+[![CI](https://github.com/gambn/dsh-dual-proxy/actions/workflows/ci.yml/badge.svg)](https://github.com/gambn/dsh-dual-proxy/actions/workflows/ci.yml) [![npm](https://img.shields.io/npm/v/dsh-dual-proxy.svg)](https://www.npmjs.com/package/dsh-dual-proxy)
+
 **Agent 的网关管理插件：在多个网关之间在线自动切换，让模型请求不再被一条不稳的路卡死。**
 
 它把「agent 到模型端点的网络路径」当成可管理的资源：在配置的上游、额外指定的代理、启动环境里的代理和直连之间自动选一条能通的；运行中用真实请求持续验证，失败立刻切到下一条——不需要重启宿主，也不需要改客户端配置。
+
+## 快速开始
+
+```bash
+# DSH 插件（npm）
+dsh plugin --profile web add dsh-dual-proxy
+
+# 独立 CLI
+npm install -g dsh-dual-proxy
+```
+
+要求 Node.js ≥ 22.19.0；DSH 插件还要求 dsh ≥ 0.1.7。插件安装后确认 `dsh.profile.bundles` 含 `dsh-dual-proxy`，再重启 `dsh web`；细节见下文。
 
 两种形态，同一份核心：
 

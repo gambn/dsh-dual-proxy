@@ -2,9 +2,23 @@
 
 [English](README.en.md) · [中文](README.md)
 
+[![CI](https://github.com/gambn/dsh-dual-proxy/actions/workflows/ci.yml/badge.svg)](https://github.com/gambn/dsh-dual-proxy/actions/workflows/ci.yml) [![npm](https://img.shields.io/npm/v/dsh-dual-proxy.svg)](https://www.npmjs.com/package/dsh-dual-proxy)
+
 **A gateway manager for agents: switch between multiple gateways online, so model requests are never stuck on one flaky path.**
 
 It treats the network path from an agent to the model endpoint as a managed resource: it picks whichever configured upstream, extra proxy, launch-environment proxy, or direct connection can reach the target, keeps verifying that channel with real requests, and switches on failure — without restarting the host or touching client configuration.
+
+## Quick start
+
+```bash
+# DSH plugin (npm)
+dsh plugin --profile web add dsh-dual-proxy
+
+# Standalone CLI
+npm install -g dsh-dual-proxy
+```
+
+Requires Node.js ≥ 22.19.0; the DSH plugin also requires dsh ≥ 0.1.7. After installing the plugin, confirm `dsh.profile.bundles` lists `dsh-dual-proxy`, then restart `dsh web`; see below for details.
 
 Two shapes, one core:
 
