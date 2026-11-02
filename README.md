@@ -20,6 +20,15 @@ npm install -g dsh-dual-proxy
 
 要求 Node.js ≥ 22.19.0；DSH 插件还要求 dsh ≥ 0.1.7。插件安装后确认 `dsh.profile.bundles` 含 `dsh-dual-proxy`，再重启 `dsh web`；细节见下文。
 
+从源码安装（可选）：
+
+```bash
+git clone https://github.com/gambn/dsh-dual-proxy.git
+cd dsh-dual-proxy
+npm install
+dsh plugin --profile web add "$PWD"
+```
+
 两种形态，同一份核心：
 
 - **DSH 插件**（推荐）：随 DSH 启停，配置在「设置 → 插件」里改，可把宿主自身的模型请求接进来；
@@ -135,7 +144,7 @@ systemd 用户服务模板在 `contrib/`。
 npm test
 ```
 
-测试面向仓库或源码快照；npm 包不含 `test/`，安装后不能直接跑这套用例。
+测试面向仓库或源码快照；首次先在源码目录 `npm install`，再 `npm test`。npm 包不含 `test/`，安装后不能直接跑这套用例。
 
 用例覆盖：HTTP 直连回退、经假代理转发、多个网关时跳过不通的、两条都不通返回 502、黑洞网关按超时换路、请求与响应两个方向的逐跳标头过滤、上游中途断开不带崩进程、CONNECT 直连隧道与经假代理隧道、CONNECT 200 同包早期数据、IPv6 字面量、缓存网关卡住时快失败换路、失败网关冷却后不再先撞、关闭时强制断开在途隧道、网关解析与去重（含自身端口排除与自环防护）、健康检查的选择与失败、健康循环记住首选、失败踢一次健康检查、健康检查重入锁、偏好缓存上限、CLI 参数校验与退出码、插件生命周期（启动/重启/双 context）、自签证书的 TLS 探测、非幂等重放策略（send 前后边界、方法分类、开关、日志与冷却）、以及 `fetch` 路由的安装/替换/回滚与回环绕过。
 

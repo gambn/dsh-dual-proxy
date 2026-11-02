@@ -20,6 +20,15 @@ npm install -g dsh-dual-proxy
 
 Requires Node.js ≥ 22.19.0; the DSH plugin also requires dsh ≥ 0.1.7. After installing the plugin, confirm `dsh.profile.bundles` lists `dsh-dual-proxy`, then restart `dsh web`; see below for details.
 
+Install from source (optional):
+
+```bash
+git clone https://github.com/gambn/dsh-dual-proxy.git
+cd dsh-dual-proxy
+npm install
+dsh plugin --profile web add "$PWD"
+```
+
 Two shapes, one core:
 
 - **DSH plugin** (recommended): starts and stops with DSH, configured under Settings → Plugins, and can route the host's own model requests through this proxy.
@@ -135,7 +144,7 @@ A systemd user-service template lives in `contrib/`.
 npm test
 ```
 
-The suite runs from the repository or the source archive; the npm package does not include `test/`, so it cannot be run from an installed package.
+The suite runs from the repository or the source archive; run `npm install` once in the source directory before `npm test`. The npm package does not include `test/`, so it cannot be run from an installed package.
 
 The suite covers: HTTP direct fallback, forwarding through a fake proxy, skipping a dead gateway among several, 502 when every path fails, timeout-based failover from a black-hole gateway, hop-by-hop header filtering in both directions, upstream disconnects mid-response without crashing, CONNECT direct tunnels and fake-proxy tunnels, early data arriving with the CONNECT 200, IPv6 literals, fast-fail when a cached gateway stalls, cooldown after a failure, forced tunnel teardown on shutdown, gateway parsing/deduplication (including self-exclusion and self-loop protection), health-check selection and failure, the health loop remembering the favourite, failure kicking a health check, the health-check reentrancy lock, the preference-cache cap, CLI validation and exit codes, plugin lifecycle (start/restart/two contexts), self-signed TLS probing, the non-idempotent replay policy (send boundary, method classes, switch, logs and cooldown), and `fetch` route installation/replacement/rollback with loopback bypass.
 
