@@ -157,6 +157,10 @@ The suite covers: HTTP direct fallback, forwarding through a fake proxy, skippin
 - The health check sends one unauthenticated `GET`; the criterion is "a response below 500", not whether credentials or model permissions are valid.
 - **At-most-once is not guaranteed**: with the default `retryNonIdempotentAfterSend: false`, `POST`/`PATCH` return 502 immediately after a failure once the connection is established (possibly delivered, not replayed), while idempotent methods are still replayed; enabling the switch restores replay-after-send at the cost of possible duplicate execution. Client SDK retries on 5xx are outside the proxy's control; for billing- or write-sensitive calls, use idempotency keys upstream.
 
+## Feedback
+
+Use GitHub Issues for questions, bugs, and suggestions: <https://github.com/gambn/dsh-dual-proxy/issues>. Do not paste tokens, keys, or full request contents into an issue; see [SECURITY.md](SECURITY.md) for security reports.
+
 ## License
 
 MIT

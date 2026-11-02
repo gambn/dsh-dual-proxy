@@ -157,6 +157,10 @@ npm test
 - 健康检查只发一个无凭证 `GET`，判据是「有没有 <500 的响应」，不代表凭证或模型权限有效。
 - **不保证「至多一次」**：默认 `retryNonIdempotentAfterSend: false` 时，`POST`/`PATCH` 在连接建立后失败会直接 502（可能已送达、未重放），幂等方法仍会重放；打开该开关会恢复发送后重放，代价是可能重复执行。客户端 SDK 对 5xx 的自动重试不受代理控制，对计费或写入敏感的调用仍应在上游使用幂等键。
 
+## 反馈
+
+问题、建议与使用疑问走 GitHub Issues：<https://github.com/gambn/dsh-dual-proxy/issues>。请勿在 Issue 里粘贴 token、密钥或完整请求内容；安全问题见 [SECURITY.md](SECURITY.md)。
+
 ## License
 
 MIT
