@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createDispatcher } from '../src/server.js';
-import { startFakeProxy, startSilent, startEcho, startEcho6, closedPort, tunnelVia } from './helpers.js';
+import { startFakeProxy, startAuthProxy, startTarget, startSilent, startEcho, startEcho6, closedPort, tunnelVia } from './helpers.js';
 
 const silentLog = () => {};
 
@@ -202,4 +202,63 @@ test('关闭：在途隧道不会让 close 永久挂住', async () => {
     new Promise((_, reject) => setTimeout(() => reject(new Error('隧道没有被强制关闭')), 800))
   ]);
   await echo.close();
+});
+
+// ---- 0.7.0 上游代理认证（A1/A2） ----
+
+const AUTH_HEADER = 'Basic ' + Buffer.from('alice:secret').toString('base64');
+
+test('A1：CONNECT 经需认证的代理，目标看不到 Proxy-Authorization', async () => {
+  const target = await startTarget();
+  const auth = await startAuthProxy();
+  const d = createDispatcher({
+    listenPort: 0,
+    upstreamPort: auth.port,
+    upstreamAuth: AUTH_HEADER,
+    attemptTimeoutMs: 1000,
+    log: silentLog
+  });
+  const addr = await d.listen();
+  try {
+    const sock = await tunnelVia(addr.port, '127.0.0.1', target.port);
+    sock.write('GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n');
+    const text = await new Promise((resolve, reject) => {
+      let buf = '';
+      sock.on('data', (chunk) => { buf += chunk; });
+      sock.on('end', () => resolve(buf));
+      sock.on('error', reject);
+      setTimeout(() => reject(new Error('tunnel response timeout')), 2000);
+    });
+    assert.match(text, /HTTP\/1\.1 200/);
+    assert.match(text, /x-echo-proxy-authorization: *\r\n/i);
+    assert.equal(auth.connectCount(), 1);
+    sock.destroy();
+  } finally {
+    await d.close();
+    await auth.close();
+    await target.close();
+  }
+});
+
+test('A2：CONNECT 认证失败时换下一条', async () => {
+  const echo = await startEcho();
+  const auth = await startAuthProxy();
+  const d = createDispatcher({
+    listenPort: 0,
+    upstreamPort: auth.port,
+    attemptTimeoutMs: 1000,
+    log: silentLog
+  });
+  const addr = await d.listen();
+  try {
+    const sock = await tunnelVia(addr.port, '127.0.0.1', echo.port);
+    const got = await echoOnce(sock, 'auth-fallback');
+    assert.equal(got, 'auth-fallback');
+    assert.equal(auth.connectCount(), 1);
+    sock.destroy();
+  } finally {
+    await d.close();
+    await auth.close();
+    await echo.close();
+  }
 });

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { createDispatcher } from '../src/server.js';
-import { startTarget, startHopTarget, startFakeProxy, startCountingProxy, startSilent, startResetProxy, startStatusTarget, startFlakyProxy, startBrokenTarget, closedPort, httpVia, requestVia } from './helpers.js';
+import { startTarget, startHopTarget, startFakeProxy, startCountingProxy, startAuthProxy, startSilent, startResetProxy, startStatusTarget, startFlakyProxy, startBrokenTarget, closedPort, httpVia, requestVia } from './helpers.js';
 
 const silent = () => {};
 
@@ -637,6 +637,194 @@ test('K1：keep-alive 复用 socket 视为已发送，POST 不重放', async () 
   } finally {
     await proxy.close();
     await flaky.close();
+    await target.close();
+  }
+});
+
+// ---- 0.7.0 上游代理认证（A3/A4/A4b/A4c/A6b/A7） ----
+
+const AUTH_HEADER = 'Basic ' + Buffer.from('alice:secret').toString('base64');
+
+test('A3：普通 HTTP 经需认证的代理，转发成功且目标看不到凭证', async () => {
+  const target = await startTarget();
+  const auth = await startAuthProxy();
+  const d = createDispatcher({
+    listenPort: 0,
+    upstreamPort: auth.port,
+    upstreamAuth: AUTH_HEADER,
+    attemptTimeoutMs: 1000,
+    log: silent
+  });
+  const addr = await d.listen();
+  try {
+    const r = await httpVia(addr.port, 'http://127.0.0.1:' + target.port + '/auth');
+    assert.equal(r.status, 200);
+    assert.equal(r.headers['x-via'], 'auth');
+    assert.equal(r.headers['x-echo-proxy-authorization'], '');
+    assert.equal(auth.plainCount(), 1);
+  } finally {
+    await d.close();
+    await auth.close();
+    await target.close();
+  }
+});
+
+test('A4：普通 HTTP 代理返回 407 时不转发，换下一条', async () => {
+  const target = await startTarget();
+  const auth = await startAuthProxy();
+  const d = createDispatcher({
+    listenPort: 0,
+    upstreamPort: auth.port,
+    attemptTimeoutMs: 1000,
+    log: silent
+  });
+  const addr = await d.listen();
+  try {
+    const r = await httpVia(addr.port, 'http://127.0.0.1:' + target.port + '/no-auth');
+    assert.equal(r.status, 200, '应回退到直连，而不是把 407 转给客户端');
+    assert.equal(r.headers['x-via'], undefined);
+    assert.equal(auth.plainCount(), 1);
+  } finally {
+    await d.close();
+    await auth.close();
+    await target.close();
+  }
+});
+
+test('A4b：407 + POST 继续下一条，不走非幂等停止', async () => {
+  const target = await startTarget();
+  const auth = await startAuthProxy();
+  const d = createDispatcher({
+    listenPort: 0,
+    upstreamPort: auth.port,
+    attemptTimeoutMs: 1000,
+    responseTimeoutMs: 200,
+    log: silent
+  });
+  const addr = await d.listen();
+  try {
+    const r = await requestVia(addr.port, 'http://127.0.0.1:' + target.port + '/post', {
+      method: 'POST', body: 'payload'
+    });
+    assert.equal(r.status, 200);
+    assert.equal(r.body, 'target:POST:payload');
+    assert.equal(auth.plainCount(), 1);
+  } finally {
+    await d.close();
+    await auth.close();
+    await target.close();
+  }
+});
+
+test('A4c：direct 目标自己的 407 原样转发', async () => {
+  const target = await startStatusTarget(407);
+  const dead = await closedPort();
+  const d = createDispatcher({ listenPort: 0, upstreamPort: dead, attemptTimeoutMs: 500, log: silent });
+  const addr = await d.listen();
+  try {
+    const r = await httpVia(addr.port, 'http://127.0.0.1:' + target.port + '/direct-407');
+    assert.equal(r.status, 407);
+    assert.equal(r.body, 'status:407');
+  } finally {
+    await d.close();
+    await target.close();
+  }
+});
+
+test('A6b：plain HTTP 健康检查经需认证代理，首选正确', async () => {
+  const target = await startTarget();
+  const auth = await startAuthProxy();
+  const d = createDispatcher({
+    listenPort: 0,
+    upstreamPort: auth.port,
+    upstreamAuth: AUTH_HEADER,
+    healthUrl: 'http://127.0.0.1:' + target.port + '/health',
+    healthIntervalMs: 60000,
+    healthTimeoutMs: 1000,
+    log: silent
+  });
+  await d.listen();
+  try {
+    d.startHealth();
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    assert.equal(d.pref.get('127.0.0.1'), '127.0.0.1:' + auth.port);
+    assert.ok(auth.connectCount() >= 1);
+  } finally {
+    await d.close();
+    await auth.close();
+    await target.close();
+  }
+});
+
+test('A7：认证失败日志不含 user/pass/Basic', async () => {
+  const target = await startTarget();
+  const auth = await startAuthProxy({ password: 'other' });
+  const messages = [];
+  const d = createDispatcher({
+    listenPort: 0,
+    upstreamPort: auth.port,
+    upstreamAuth: AUTH_HEADER,
+    attemptTimeoutMs: 1000,
+    log: (msg) => messages.push(msg)
+  });
+  const addr = await d.listen();
+  try {
+    const r = await httpVia(addr.port, 'http://127.0.0.1:' + target.port + '/log');
+    assert.equal(r.status, 200);
+    const text = messages.join('\n');
+    assert.ok(!text.includes('alice'));
+    assert.ok(!text.includes('secret'));
+    assert.ok(!text.includes('Basic'));
+  } finally {
+    await d.close();
+    await auth.close();
+    await target.close();
+  }
+});
+
+test('A5：gateways 与 upstream 同 host:port 的 auth 合并后端到端生效', async () => {
+  const target = await startTarget();
+  const auth = await startAuthProxy();
+  const d = createDispatcher({
+    listenPort: 0,
+    upstreamHost: '127.0.0.1',
+    upstreamPort: auth.port,
+    gateways: ['http://alice:secret@127.0.0.1:' + auth.port],
+    attemptTimeoutMs: 1000,
+    log: silent
+  });
+  const addr = await d.listen();
+  try {
+    const r = await httpVia(addr.port, 'http://127.0.0.1:' + target.port + '/merged');
+    assert.equal(r.status, 200);
+    assert.equal(r.headers['x-via'], 'auth');
+  } finally {
+    await d.close();
+    await auth.close();
+    await target.close();
+  }
+});
+
+test('A6c：健康检查认证失败时不把该代理设为首选', async () => {
+  const target = await startTarget();
+  const auth = await startAuthProxy({ password: 'other' });
+  const d = createDispatcher({
+    listenPort: 0,
+    upstreamPort: auth.port,
+    upstreamAuth: AUTH_HEADER,
+    healthUrl: 'http://127.0.0.1:' + target.port + '/health',
+    healthIntervalMs: 60000,
+    healthTimeoutMs: 1000,
+    log: silent
+  });
+  await d.listen();
+  try {
+    d.startHealth();
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    assert.notEqual(d.pref.get('127.0.0.1'), '127.0.0.1:' + auth.port);
+  } finally {
+    await d.close();
+    await auth.close();
     await target.close();
   }
 });

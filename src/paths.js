@@ -87,6 +87,7 @@ export function connectViaProxy(upstream, host, port, timeoutMs) {
     sock.write(
       'CONNECT ' + host + ':' + port + ' HTTP/1.1\r\n' +
       'Host: ' + host + ':' + port + '\r\n' +
+      (upstream.auth ? 'Proxy-Authorization: ' + upstream.auth + '\r\n' : '') +
       'Proxy-Connection: keep-alive\r\n\r\n'
     );
   });

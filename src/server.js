@@ -262,9 +262,12 @@ export function createDispatcher(options) {
       // 响应体开始流之后不再计时（长回答可能很慢）。
       // sent 以“到网关/目标的 TCP 连接是否建立”为界，用于决定失败后能否重放。
       const attemptVia = (gateway, connectTimeoutMs) => new Promise((resolve) => {
+        const attemptHeaders = gateway.direct || !gateway.auth
+          ? headers
+          : Object.assign({}, headers, { 'proxy-authorization': gateway.auth });
         const reqOpts = gateway.direct
-          ? { host, port, method: req.method, path: target.pathname + target.search, headers }
-          : { host: gateway.host, port: gateway.port, method: req.method, path: req.url, headers };
+          ? { host, port, method: req.method, path: target.pathname + target.search, headers: attemptHeaders }
+          : { host: gateway.host, port: gateway.port, method: req.method, path: req.url, headers: attemptHeaders };
 
         let sent = false;
         let connectTimer;
@@ -283,6 +286,12 @@ export function createDispatcher(options) {
 
         const upstreamReq = http.request(reqOpts, (up) => {
           clearTimers();
+          if (!gateway.direct && up.statusCode === 407) {
+            up.resume();
+            up.destroy();
+            resolve({ err: Object.assign(new Error('proxy authentication required'), { code: 'EPROXYAUTH' }), sent: true });
+            return;
+          }
           resolve({ up });
         });
         connectTimer = setTimeout(() => fail('gateway connect timeout'), connectTimeoutMs);
@@ -315,6 +324,8 @@ export function createDispatcher(options) {
             if (r.err) {
               log(host + ' ' + gateway.id + ' failed: ' + (r.err.code || r.err.message));
               noteFailure(gateway);
+              // 407 是代理在转发前拒绝，目标没收到请求：无论方法是否幂等都应换下一条。
+              if (r.err.code === 'EPROXYAUTH') continue;
               if (!shouldRetryAfterSend({
                 method: req.method,
                 sent: r.sent,

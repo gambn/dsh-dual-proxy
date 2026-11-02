@@ -22,6 +22,7 @@ export async function startTarget() {
         'x-target': 'yes',
         'x-echo-host': String(req.headers.host || ''),
         'x-echo-proxy-connection': String(req.headers['proxy-connection'] || ''),
+        'x-echo-proxy-authorization': String(req.headers['proxy-authorization'] || ''),
         'x-echo-custom': String(req.headers['x-custom'] || '')
       });
       res.end('target:' + req.method + ':' + body);
@@ -66,6 +67,64 @@ export async function startFakeProxy(tag = 'proxy') {
 
   const port = await listen(server);
   return { port, count: () => count, close: () => close(server) };
+}
+
+/** 需要 Basic 认证的假上游代理：普通 HTTP 与 CONNECT 都校验 Proxy-Authorization */
+export async function startAuthProxy({ user = 'alice', password = 'secret', tag = 'auth' } = {}) {
+  const expected = 'Basic ' + Buffer.from(user + ':' + password).toString('base64');
+  let plainCount = 0;
+  let connectCount = 0;
+  const server = http.createServer((req, res) => {
+    plainCount += 1;
+    if (req.headers['proxy-authorization'] !== expected) {
+      req.resume();
+      res.writeHead(407, { 'proxy-authenticate': 'Basic realm="test"' });
+      res.end('proxy auth required');
+      return;
+    }
+    let url;
+    try { url = new URL(req.url); } catch (e) { res.writeHead(400); res.end('bad'); return; }
+    const headers = Object.assign({}, req.headers, { host: url.host });
+    delete headers['proxy-authorization'];
+    const up = http.request({
+      host: url.hostname,
+      port: Number(url.port || 80),
+      path: url.pathname + url.search,
+      method: req.method,
+      headers
+    }, (upRes) => {
+      res.writeHead(upRes.statusCode, Object.assign({}, upRes.headers, { 'x-via': tag }));
+      upRes.pipe(res);
+    });
+    up.on('error', () => { res.writeHead(502); res.end('proxy error'); });
+    req.pipe(up);
+  });
+
+  server.on('connect', (req, socket, head) => {
+    connectCount += 1;
+    if (req.headers['proxy-authorization'] !== expected) {
+      socket.end('HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm="test"\r\n\r\n');
+      return;
+    }
+    const [host, port] = String(req.url).split(':');
+    const target = net.connect(Number(port), host, () => {
+      socket.write('HTTP/1.1 200 OK\r\n\r\n');
+      if (head && head.length) target.write(head);
+      target.pipe(socket);
+      socket.pipe(target);
+    });
+    target.on('error', () => socket.destroy());
+    socket.on('error', () => target.destroy());
+  });
+
+  const port = await listen(server);
+  return {
+    port,
+    count: () => plainCount + connectCount,
+    plainCount: () => plainCount,
+    connectCount: () => connectCount,
+    close: () => close(server)
+  };
 }
 
 /** 同 startFakeProxy，命名更明确；带 count() */
