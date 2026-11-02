@@ -3,7 +3,7 @@ import { createRequire } from 'node:module';
 import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { createDispatcher } from '../src/server.js';
-import { collectGateways, isLoopbackHost, parseGateway, resolveUpstream } from '../src/gateways.js';
+import { collectGateways, isLoopbackHost, resolveUpstream } from '../src/gateways.js';
 import { assertNode } from '../src/engines.js';
 
 const require = createRequire(import.meta.url);
@@ -116,14 +116,16 @@ export function parseArgs(args, env = {}) {
     }
   }
 
-  for (let i = 0; i < opts.gateways.length; i += 1) {
-    if (!parseGateway(opts.gateways[i])) {
-      throw new UsageError('invalid value for --gateway #' + (i + 1) + ' (userinfo redacted)');
+  if (opts.upstreamUrl) {
+    // upstreamUrl 是显式的第一个候选：非法值 fail fast，由 resolveUpstream 给出脱敏原因。
+    try {
+      resolveUpstream(opts);
+    } catch (err) {
+      throw new UsageError(err && err.message ? err.message : 'invalid upstreamUrl (userinfo redacted)');
     }
   }
-  if (opts.upstreamUrl && !parseGateway(opts.upstreamUrl)) {
-    throw new UsageError('invalid value for --upstream-url (userinfo redacted)');
-  }
+  // --gateway/GATEWAY 与 gateways 配置一样，交给 collectGateways 做 warning + skip；
+  // 非法额外候选不应阻止启动或悄悄回退。
   return opts;
 }
 

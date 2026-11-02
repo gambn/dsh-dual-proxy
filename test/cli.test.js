@@ -15,7 +15,6 @@ test('CLI：非法端口与负的间隔都被拒绝', () => {
   assert.throws(() => parseArgs(['--listen-port', 'abc'], {}), UsageError);
   assert.throws(() => parseArgs(['--listen-port', '0'], {}), UsageError);
   assert.throws(() => parseArgs(['--health-interval-ms', '-1'], {}), UsageError);
-  assert.throws(() => parseArgs(['--gateway', 'not a gateway'], {}), UsageError);
   assert.throws(() => parseArgs([], { LISTEN_PORT: 'abc' }), UsageError);
 });
 
@@ -67,6 +66,15 @@ test('I19：CLI 帮助包含重放开关', () => {
   assert.match(run.stdout, /--retry-non-idempotent-after-send/);
 });
 
+test('CLI：额外网关交给 collectGateways warning/skip，upstreamUrl 仍 fail fast', () => {
+  assert.doesNotThrow(() => parseArgs(['--gateway', 'not a gateway'], {}));
+  assert.doesNotThrow(() => parseArgs(['--gateway', 'https://alice:secret@proxy.local:8443'], {}));
+  assert.throws(
+    () => parseArgs(['--upstream-url', 'https://alice:secret@proxy.local:8443'], {}),
+    (err) => err instanceof UsageError && /https upstream proxy is not supported/.test(err.message)
+  );
+});
+
 test('CLI：upstreamUrl 解析与非法值脱敏（U16/U17/U19）', () => {
   const opts = parseArgs(['--upstream-url', 'http://alice:secret@127.0.0.1:8080'], {});
   assert.equal(opts.upstreamUrl, 'http://alice:secret@127.0.0.1:8080');
@@ -87,12 +95,8 @@ test('CLI：upstreamUrl 解析与非法值脱敏（U16/U17/U19）', () => {
     return true;
   });
 
-  assert.throws(() => parseArgs(['--gateway', 'http://alice:secret@not a gateway'], {}), (err) => {
-    assert.ok(err instanceof UsageError);
-    assert.ok(!err.message.includes('alice'));
-    assert.ok(!err.message.includes('secret'));
-    return true;
-  });
+  // 额外网关不再在 parseArgs 报错，凭证泄漏面改由 collectGateways 的脱敏 warning 覆盖。
+  assert.doesNotThrow(() => parseArgs(['--gateway', 'http://alice:secret@not a gateway'], {}));
 });
 
 test('CLI：非法 upstreamUrl 以退出码 2 结束且不泄漏凭证（U16/U17）', () => {
