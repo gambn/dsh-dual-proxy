@@ -1,6 +1,6 @@
 import Schema from '@deepseek-ai/schemastery';
 import { createDispatcher } from './server.js';
-import { collectGateways, isLoopbackHost } from './gateways.js';
+import { collectGateways, isLoopbackHost, resolveUpstream } from './gateways.js';
 import { installFetchRoute, uninstallFetchRoute } from './fetch-route.js';
 import { createRestarter } from './restart.js';
 import { assertNode } from './engines.js';
@@ -28,6 +28,7 @@ export const Config = Schema.object({
   listenPort: live(Schema.number().min(1).max(65535).step(1).default(7898)),
   upstreamHost: live(Schema.string().default('127.0.0.1')),
   upstreamPort: live(Schema.number().min(1).max(65535).step(1).default(7897)),
+  upstreamUrl: live(Schema.string().default('')),
   gateways: live(Schema.string().default('')),
   routeHostFetch: live(Schema.boolean().default(false)),
   healthUrl: live(Schema.string().default('https://api.deepseek.com')),
@@ -63,6 +64,7 @@ function plainConfig(config) {
     listenPort: fieldValue(config, 'listenPort', 7898),
     upstreamHost: fieldValue(config, 'upstreamHost', '127.0.0.1'),
     upstreamPort: fieldValue(config, 'upstreamPort', 7897),
+    upstreamUrl: fieldValue(config, 'upstreamUrl', ''),
     gateways: fieldValue(config, 'gateways', ''),
     routeHostFetch: fieldValue(config, 'routeHostFetch', false),
     healthUrl: fieldValue(config, 'healthUrl', 'https://api.deepseek.com'),
@@ -99,6 +101,14 @@ export async function apply(ctx, config) {
 
   const start = async () => {
     if (disposed) return;
+    const base = plainConfig(config);
+    let upstream;
+    try {
+      upstream = resolveUpstream(base);
+    } catch (err) {
+      error('dsh-dual-proxy invalid upstreamUrl: ' + (err && err.message ? err.message : String(err)));
+      return;
+    }
     try {
       // 先把 fetch 还原，再换监听：中途失败时宿主还能走启动时的代理策略
       uninstallFetchRoute();
@@ -109,15 +119,19 @@ export async function apply(ctx, config) {
       }
       if (disposed) return;
 
-      const { gateways: gatewayText, routeHostFetch, ...dispatcherConfig } = plainConfig(config);
+      const { gateways: gatewayText, routeHostFetch, upstreamUrl, ...dispatcherConfig } = base;
+      dispatcherConfig.upstreamHost = upstream.host;
+      dispatcherConfig.upstreamPort = upstream.port;
+      if (upstream.auth) dispatcherConfig.upstreamAuth = upstream.auth;
       if (!isLoopbackHost(dispatcherConfig.listenHost)) {
         log('warning: dsh-dual-proxy listens on non-loopback ' + dispatcherConfig.listenHost + '; the proxy has no authentication');
       }
       const gateways = collectGateways({
-        upstream: { host: dispatcherConfig.upstreamHost, port: dispatcherConfig.upstreamPort },
+        upstream,
         extra: extraGateways(gatewayText),
         env: process.env,
-        self: { host: dispatcherConfig.listenHost, port: dispatcherConfig.listenPort }
+        self: { host: dispatcherConfig.listenHost, port: dispatcherConfig.listenPort },
+        onInvalid: (subject, reason) => log('gateway warning: ' + subject + ': ' + reason)
       });
       const dispatcher = createDispatcher(Object.assign({}, dispatcherConfig, { gateways, log }));
       const addr = await dispatcher.listen();

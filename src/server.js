@@ -110,10 +110,17 @@ export function createDispatcher(options) {
   const log = opts.log;
   const pref = createPref(opts.prefTtlMs, undefined, opts.prefMaxSize);
   const candidates = buildCandidates(
-    { host: opts.upstreamHost, port: opts.upstreamPort },
+    Object.assign(
+      { host: opts.upstreamHost, port: opts.upstreamPort },
+      opts.upstreamAuth ? { auth: opts.upstreamAuth } : {}
+    ),
     opts.gateways,
-    { host: opts.listenHost, port: opts.listenPort }
+    { host: opts.listenHost, port: opts.listenPort },
+    (subject, reason) => log('gateway warning: ' + subject + ': ' + reason)
   );
+  const publicCandidates = candidates.map((gateway) => (gateway.direct
+    ? { id: gateway.id, direct: true }
+    : { id: gateway.id, host: gateway.host, port: gateway.port }));
   const health = parseHealthUrl(opts.healthUrl);
   const healthTimeoutMs = opts.healthTimeoutMs || opts.attemptTimeoutMs;
 
@@ -459,7 +466,7 @@ export function createDispatcher(options) {
   return {
     server,
     pref,
-    candidates,
+    candidates: publicCandidates,
     listen() {
       return new Promise((resolve, reject) => {
         const onError = (err) => {

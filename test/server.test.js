@@ -19,6 +19,19 @@ test('候选列表：上游与监听同端口时不会把自己当网关', () =>
   d.close();
 });
 
+test('候选公开视图：不暴露 auth（C1b）', () => {
+  const d = createDispatcher({
+    listenPort: 7898,
+    upstreamHost: '127.0.0.1',
+    upstreamPort: 7897,
+    upstreamAuth: 'Basic c2VjcmV0',
+    log: silent
+  });
+  assert.deepEqual(d.candidates[0], { id: '127.0.0.1:7897', host: '127.0.0.1', port: 7897 });
+  assert.ok(!Object.prototype.hasOwnProperty.call(d.candidates[0], 'auth'));
+  d.close();
+});
+
 test('listen：保留一个持久 error 监听，双 emit 不抛，端口占用仍 reject', async () => {
   const first = createDispatcher({ listenPort: 0, log: silent });
   const addr = await first.listen();

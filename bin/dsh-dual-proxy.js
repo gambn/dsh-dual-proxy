@@ -3,7 +3,7 @@ import { createRequire } from 'node:module';
 import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { createDispatcher } from '../src/server.js';
-import { collectGateways, isLoopbackHost, parseGateway } from '../src/gateways.js';
+import { collectGateways, isLoopbackHost, parseGateway, resolveUpstream } from '../src/gateways.js';
 import { assertNode } from '../src/engines.js';
 
 const require = createRequire(import.meta.url);
@@ -23,6 +23,7 @@ function usage() {
     '  --listen-port <port>    default 7898',
     '  --upstream-host <host>  default 127.0.0.1',
     '  --upstream-port <port>  default 7897',
+    '  --upstream-url <url>    full upstream URL, may include user:pass',
     '  --gateway <host:port>   extra candidate gateway, repeatable',
     '  --health-url <url>      verify the channel with this URL, default off',
     '  --health-interval-ms <ms>  default 60000, 0 disables',
@@ -37,7 +38,7 @@ function usage() {
     '  -h, --help              show this help',
     '  -v, --version           print version',
     '',
-    'Env fallbacks: LISTEN_HOST / LISTEN_PORT / UPSTREAM_HOST / UPSTREAM_PORT /',
+    'Env fallbacks: LISTEN_HOST / LISTEN_PORT / UPSTREAM_HOST / UPSTREAM_PORT / UPSTREAM_URL /',
     '               GATEWAY / HEALTH_URL / HEALTH_INTERVAL_MS / FAST_FAIL_MS /',
     '               COOLDOWN_MS / ATTEMPT_TIMEOUT_MS / RESPONSE_TIMEOUT_MS /',
     '               PREF_TTL_MS / VERIFY_TLS=0 / RETRY_NON_IDEMPOTENT_AFTER_SEND=1',
@@ -66,6 +67,7 @@ export function parseArgs(args, env = {}) {
     listenPort: integer('LISTEN_PORT', envValue(env, 'LISTEN_PORT') ?? 7898, 1, 65535),
     upstreamHost: envValue(env, 'UPSTREAM_HOST') || '127.0.0.1',
     upstreamPort: integer('UPSTREAM_PORT', envValue(env, 'UPSTREAM_PORT') ?? 7897, 1, 65535),
+    upstreamUrl: envValue(env, 'UPSTREAM_URL') || '',
     attemptTimeoutMs: integer('ATTEMPT_TIMEOUT_MS', envValue(env, 'ATTEMPT_TIMEOUT_MS') ?? 5000, 100, 60000),
     responseTimeoutMs: integer('RESPONSE_TIMEOUT_MS', envValue(env, 'RESPONSE_TIMEOUT_MS') ?? 60000, 100, 600000),
     prefTtlMs: integer('PREF_TTL_MS', envValue(env, 'PREF_TTL_MS') ?? 60000, 0, 3600000),
@@ -90,6 +92,7 @@ export function parseArgs(args, env = {}) {
       case '--listen-port': opts.listenPort = integer(arg, next(), 1, 65535); break;
       case '--upstream-host': opts.upstreamHost = next(); break;
       case '--upstream-port': opts.upstreamPort = integer(arg, next(), 1, 65535); break;
+      case '--upstream-url': opts.upstreamUrl = next(); break;
       case '--gateway': opts.gateways.push(next()); break;
       case '--health-url': opts.healthUrl = next(); break;
       case '--health-interval-ms': opts.healthIntervalMs = integer(arg, next(), 0, 3600000); break;
@@ -108,8 +111,13 @@ export function parseArgs(args, env = {}) {
     }
   }
 
-  for (const value of opts.gateways) {
-    if (!parseGateway(value)) throw new UsageError('invalid value for --gateway: ' + value);
+  for (let i = 0; i < opts.gateways.length; i += 1) {
+    if (!parseGateway(opts.gateways[i])) {
+      throw new UsageError('invalid value for --gateway #' + (i + 1) + ' (userinfo redacted)');
+    }
+  }
+  if (opts.upstreamUrl && !parseGateway(opts.upstreamUrl)) {
+    throw new UsageError('invalid value for --upstream-url (userinfo redacted)');
   }
   return opts;
 }
@@ -120,17 +128,29 @@ async function main() {
     const opts = parseArgs(process.argv.slice(2), process.env);
     if (opts.help) { usage(); return; }
     if (opts.version) { process.stdout.write(pkg.version + '\n'); return; }
+    let upstream;
+    try {
+      upstream = resolveUpstream(opts);
+    } catch (err) {
+      throw new UsageError(err && err.message ? err.message : 'invalid upstreamUrl (userinfo redacted)');
+    }
     if (!isLoopbackHost(opts.listenHost)) {
       process.stderr.write('warning: listening on ' + opts.listenHost + '; this proxy has no authentication\n');
     }
 
     const gateways = collectGateways({
-      upstream: { host: opts.upstreamHost, port: opts.upstreamPort },
+      upstream,
       extra: opts.gateways,
       env: process.env,
-      self: { host: opts.listenHost, port: opts.listenPort }
+      self: { host: opts.listenHost, port: opts.listenPort },
+      onInvalid: (subject, reason) => process.stderr.write('warning: ' + subject + ': ' + reason + '\n')
     });
-    const dispatcher = createDispatcher(Object.assign({}, opts, { gateways }));
+    const dispatcher = createDispatcher(Object.assign({}, opts, {
+      upstreamHost: upstream.host,
+      upstreamPort: upstream.port,
+      upstreamAuth: upstream.auth,
+      gateways
+    }));
     const addr = await dispatcher.listen();
     dispatcher.startHealth();
     process.stderr.write('[dual-proxy] listening on ' + addr.address + ':' + addr.port +
