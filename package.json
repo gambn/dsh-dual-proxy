@@ -1,0 +1,58 @@
+{
+  "name": "dsh-dual-proxy",
+  "version": "0.6.0",
+  "description": "Agent gateway manager: picks a working gateway among proxies and direct, verifies the model channel, and switches online; DSH plugin plus standalone CLI.",
+  "license": "MIT",
+  "keywords": [
+    "dsh-plugin",
+    "dsh",
+    "deepseek-harness",
+    "http-proxy",
+    "failover",
+    "undici"
+  ],
+  "type": "module",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gambn/dsh-dual-proxy.git"
+  },
+  "homepage": "https://github.com/gambn/dsh-dual-proxy#readme",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "bin": {
+    "dsh-dual-proxy": "bin/dsh-dual-proxy.js"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "start": "node bin/dsh-dual-proxy.js"
+  },
+  "dependencies": {
+    "@deepseek-ai/schemastery": "3.18.5",
+    "undici": "8.12.3"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "files": [
+    "bin",
+    "src",
+    "contrib",
+    "cordis.patch.yml",
+    "README.md",
+    "README.en.md",
+    "LICENSE"
+  ],
+  "author": "Gambn",
+  "bugs": {
+    "url": "https://github.com/gambn/dsh-dual-proxy/issues"
+  }
+}

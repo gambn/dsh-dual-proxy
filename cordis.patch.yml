@@ -1,0 +1,29 @@
+# dsh-dual-proxy —— DSH bundle patch.
+# 插入一个 loader 条目；配置字段与 src/index.js 的 Config 对齐，
+# 在 dsh ≥ 0.1.7 上会以「设置 → 插件」里的表单呈现（volatile 字段）。
+- insert:
+    - id: dsh-dual-proxy
+      name: 'dsh-dual-proxy'
+      config:
+        listenHost: '127.0.0.1'
+        listenPort: 7898
+        upstreamHost: '127.0.0.1'
+        upstreamPort: 7897
+        # 额外候选网关（host:port，逗号分隔）；启动环境里的 HTTP(S)_PROXY 也会自动加入
+        gateways: ''
+        # 把宿主进程的 fetch（模型请求）引到本代理上
+        routeHostFetch: true
+        # 用真实请求验证“到模型端点”的通道；401/403 也算通
+        healthUrl: 'https://api.deepseek.com'
+        healthIntervalMs: 60000
+        # 已知路径（缓存/首选）的超时：它挂了要快点换
+        fastFailTimeoutMs: 2000
+        # 失败网关的冷却时长；冷却期间排到最后
+        cooldownMs: 30000
+        # 默认 false：POST/PATCH 在连接建立后失败不再换路重放，回 502 说明可能已送达
+        retryNonIdempotentAfterSend: false
+        attemptTimeoutMs: 5000
+        # 普通 HTTP 等响应头的上限（响应体开始流之后不再计时）
+        responseTimeoutMs: 60000
+        prefTtlMs: 60000
+        verifyTls: true
