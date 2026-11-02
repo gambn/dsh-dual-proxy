@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs, UsageError } from '../bin/dsh-dual-proxy.js';
+import { resolveUpstream } from '../src/gateways.js';
 
 const bin = fileURLToPath(new URL('../bin/dsh-dual-proxy.js', import.meta.url));
 const version = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
@@ -79,6 +80,12 @@ test('CLI：upstreamUrl 解析与非法值脱敏（U16/U17/U19）', () => {
       return true;
     });
   }
+  assert.throws(() => resolveUpstream({ upstreamUrl: 'https://alice:secret@proxy.local:8443' }), (err) => {
+    assert.match(err.message, /https upstream proxy is not supported/);
+    assert.ok(!err.message.includes('alice'));
+    assert.ok(!err.message.includes('secret'));
+    return true;
+  });
 
   assert.throws(() => parseArgs(['--gateway', 'http://alice:secret@not a gateway'], {}), (err) => {
     assert.ok(err instanceof UsageError);

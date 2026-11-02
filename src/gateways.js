@@ -135,6 +135,9 @@ export function collectGateways({ upstream, extra = [], env = {}, self, onInvali
 export function resolveUpstream({ upstreamUrl, upstreamHost = '127.0.0.1', upstreamPort = 7897 } = {}) {
   const text = String(upstreamUrl === undefined || upstreamUrl === null ? '' : upstreamUrl).trim();
   if (text) {
+    if (/^https:\/\//i.test(text)) {
+      throw new UpstreamError('invalid upstreamUrl: https upstream proxy is not supported (userinfo redacted)');
+    }
     const parsed = parseGateway(text);
     if (!parsed) throw new UpstreamError('invalid upstreamUrl (userinfo redacted)');
     return parsed;

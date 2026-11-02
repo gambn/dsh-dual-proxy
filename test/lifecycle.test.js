@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import net from 'node:net';
 import { apply } from '../src/index.js';
 import { isFetchRouteInstalled } from '../src/fetch-route.js';
-import { closedPort } from './helpers.js';
+import { closedPort, startAuthProxy, startFakeProxy, startTarget, httpVia } from './helpers.js';
 
 function makeCtx() {
   const handlers = new Map();
@@ -146,4 +146,30 @@ test('生命周期：非法 upstreamUrl 不监听、不装 fetch、日志脱敏'
   assert.ok(!text.includes('alice') && !text.includes('secret') && !text.includes('proxy.local'));
   assert.equal(isFetchRouteInstalled(), false);
   await ctx.dispose();
+});
+
+test('生命周期：upstreamUrl auth 覆盖旧 upstream，端到端走认证代理（A9）', async () => {
+  const target = await startTarget();
+  const auth = await startAuthProxy();
+  const old = await startFakeProxy('old');
+  const port = await closedPort();
+  const ctx = makeCtx();
+  try {
+    await apply(ctx, cfg(port, {
+      upstreamUrl: 'http://alice:secret@127.0.0.1:' + auth.port,
+      upstreamHost: '127.0.0.1',
+      upstreamPort: old.port
+    }));
+    const r = await httpVia(port, 'http://127.0.0.1:' + target.port + '/e2e');
+    assert.equal(r.status, 200);
+    assert.equal(r.headers['x-via'], 'auth');
+    assert.equal(r.headers['x-echo-proxy-authorization'], '');
+    assert.equal(old.count(), 0, '旧 upstream 不应被重新加回');
+    assert.equal(auth.plainCount(), 1);
+  } finally {
+    await ctx.dispose();
+    await auth.close();
+    await old.close();
+    await target.close();
+  }
 });

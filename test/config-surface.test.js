@@ -6,7 +6,7 @@ function read(relative) {
   return readFileSync(new URL(relative, import.meta.url), 'utf8');
 }
 
-test('I20：重放开关在 Config / patch / README / CLI 四处一致', () => {
+test('I20：重放/认证配置面在 Config/plainConfig/patch/两份 README/CLI/env 一致', () => {
   const index = read('../src/index.js');
   assert.match(index, /retryNonIdempotentAfterSend: live\(Schema\.boolean\(\)\.default\(false\)\)/);
   assert.match(index, /retryNonIdempotentAfterSend: fieldValue\(config, 'retryNonIdempotentAfterSend', false\)/);
@@ -21,15 +21,22 @@ test('I20：重放开关在 Config / patch / README / CLI 四处一致', () => {
   assert.match(patch, /retryNonIdempotentWithIdempotencyKey: false/);
 
   const readme = read('../README.md');
-  assert.match(readme, /retryNonIdempotentAfterSend/);
-  assert.match(readme, /--retry-non-idempotent-after-send/);
-  assert.match(readme, /RETRY_NON_IDEMPOTENT_AFTER_SEND=1/);
-  assert.match(readme, /upstreamUrl/);
-  assert.match(readme, /--upstream-url/);
-  assert.match(readme, /UPSTREAM_URL/);
-  assert.match(readme, /retryNonIdempotentWithIdempotencyKey/);
-  assert.match(readme, /--retry-non-idempotent-with-idempotency-key/);
-  assert.match(readme, /RETRY_NON_IDEMPOTENT_WITH_IDEMPOTENCY_KEY=1/);
+  const readmeEn = read('../README.en.md');
+  for (const doc of [readme, readmeEn]) {
+    assert.match(doc, /retryNonIdempotentAfterSend/);
+    assert.match(doc, /--retry-non-idempotent-after-send/);
+    assert.match(doc, /RETRY_NON_IDEMPOTENT_AFTER_SEND=1/);
+    assert.match(doc, /upstreamUrl/);
+    assert.match(doc, /--upstream-url/);
+    assert.match(doc, /UPSTREAM_URL/);
+    assert.match(doc, /retryNonIdempotentWithIdempotencyKey/);
+    assert.match(doc, /--retry-non-idempotent-with-idempotency-key/);
+    assert.match(doc, /RETRY_NON_IDEMPOTENT_WITH_IDEMPOTENCY_KEY=1/);
+    assert.ok(!doc.includes('不支持上游代理认证'), '不应保留旧的中文边界');
+    assert.ok(!doc.includes('凭证会被丢弃'), '不应保留旧的中文边界');
+    assert.ok(!doc.includes('authentication is not supported'), '不应保留旧的英文边界');
+    assert.ok(!doc.includes('are dropped'), '不应保留旧的英文边界');
+  }
 
   const bin = read('../bin/dsh-dual-proxy.js');
   assert.match(bin, /--retry-non-idempotent-after-send/);
