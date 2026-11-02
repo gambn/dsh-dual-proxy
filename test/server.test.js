@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import net from 'node:net';
 import { createDispatcher, mergeOptions } from '../src/server.js';
 
 const silent = () => {};
@@ -47,5 +48,31 @@ test('listen：保留一个持久 error 监听，双 emit 不抛，端口占用�
     await second.close();
   } finally {
     await first.close();
+  }
+});
+
+test('healthUrl 非法时按未配置处理，不抛', () => {
+  const d = createDispatcher({ listenPort: 0, healthUrl: 'not a url', log: silent });
+  assert.equal(d.server.listening, false);
+  d.close();
+});
+
+test('HTTP 入口：非法 target 与 https:// target 都回 400', async () => {
+  const d = createDispatcher({ listenPort: 0, upstreamPort: 1, log: silent });
+  const addr = await d.listen();
+  const raw = (line) => new Promise((resolve, reject) => {
+    const sock = net.connect(addr.port, '127.0.0.1', () => {
+      sock.write(line + ' HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n');
+    });
+    let buf = '';
+    sock.on('data', (chunk) => { buf += chunk; });
+    sock.on('end', () => resolve(buf));
+    sock.on('error', reject);
+  });
+  try {
+    assert.match(await raw('GET not-a-url'), /^HTTP\/1\.1 400/);
+    assert.match(await raw('GET https://example.com/'), /^HTTP\/1\.1 400/);
+  } finally {
+    await d.close();
   }
 });

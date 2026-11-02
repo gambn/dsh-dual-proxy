@@ -151,3 +151,22 @@ test('redactGateway：去掉 userinfo，非法值不泄漏原文', () => {
   assert.equal(redactGateway('not a gateway'), '<invalid>');
   assert.equal(redactGateway('http://alice:secret@'), '<invalid>');
 });
+
+test('collectGateways：非法 upstream 对象也走 warning，不静默（U16 数据层）', () => {
+  const warnings = [];
+  const list = collectGateways({
+    upstream: { host: '', port: 1 },
+    onInvalid: (subject, reason) => warnings.push([subject, reason])
+  });
+  assert.deepEqual(list, []);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0][1], /invalid gateway/);
+});
+
+test('resolveUpstream：非法 host/port 抛脱敏错误', () => {
+  assert.throws(() => resolveUpstream({ upstreamHost: '127.0.0.1', upstreamPort: 0 }), (err) => {
+    assert.ok(err instanceof UpstreamError);
+    assert.match(err.message, /invalid upstreamHost/);
+    return true;
+  });
+});

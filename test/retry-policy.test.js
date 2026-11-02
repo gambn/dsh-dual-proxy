@@ -36,12 +36,18 @@ test('retry-policy：幂等键存在性（U13/A8）', () => {
   assert.equal(hasIdempotencyKey({ 'idempotency-key': ['', '  '] }), false);
   assert.equal(hasIdempotencyKey({}), false);
   assert.equal(hasIdempotencyKey(undefined), false);
+  assert.equal(hasIdempotencyKey(null), false);
+  assert.equal(hasIdempotencyKey('idempotency-key'), false);
+  assert.equal(hasIdempotencyKey({ 'idempotency-key': null }), false);
+  assert.equal(hasIdempotencyKey({ 'content-type': 'application/json' }), false);
+  assert.equal(hasIdempotencyKey({ 'content-type': 'application/json', 'idempotency-key': 'abc' }), true);
 });
 
 test('retry-policy：键开关与全局开关的优先级（U14/C3）', () => {
   const post = { method: 'POST', sent: true };
   assert.equal(shouldRetryAfterSend({ ...post, retryNonIdempotentWithIdempotencyKey: true, idempotencyKey: true }), true);
   assert.equal(shouldRetryAfterSend({ ...post, retryNonIdempotentWithIdempotencyKey: true, idempotencyKey: false }), false);
+  assert.equal(shouldRetryAfterSend({ ...post, retryNonIdempotentWithIdempotencyKey: true }), false);
   assert.equal(shouldRetryAfterSend({ ...post, retryNonIdempotentWithIdempotencyKey: false, idempotencyKey: true }), false);
   assert.equal(shouldRetryAfterSend({ ...post, retryNonIdempotentAfterSend: true }), true);
   assert.equal(shouldRetryAfterSend({ ...post, retryNonIdempotentAfterSend: true, retryNonIdempotentWithIdempotencyKey: true }), true);

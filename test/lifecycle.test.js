@@ -135,3 +135,15 @@ test('生命周期：初次启动过程中 dispose 不泄漏监听', async () =>
   await applying.catch(() => { /* 释放期间 apply 可能被拒绝 */ });
   assert.equal(await tryConnect(port), false);
 });
+
+test('生命周期：非法 upstreamUrl 不监听、不装 fetch、日志脱敏', async () => {
+  const port = await closedPort();
+  const ctx = makeCtx();
+  await apply(ctx, cfg(port, { upstreamUrl: 'https://alice:secret@proxy.local:8443' }));
+  assert.equal(await tryConnect(port), false);
+  assert.ok(ctx.errors.some((msg) => msg.includes('invalid upstreamUrl')));
+  const text = ctx.errors.join('\n');
+  assert.ok(!text.includes('alice') && !text.includes('secret') && !text.includes('proxy.local'));
+  assert.equal(isFetchRouteInstalled(), false);
+  await ctx.dispose();
+});
