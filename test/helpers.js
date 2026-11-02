@@ -23,6 +23,7 @@ export async function startTarget() {
         'x-echo-host': String(req.headers.host || ''),
         'x-echo-proxy-connection': String(req.headers['proxy-connection'] || ''),
         'x-echo-proxy-authorization': String(req.headers['proxy-authorization'] || ''),
+        'x-echo-idempotency-key': String(req.headers['idempotency-key'] || ''),
         'x-echo-custom': String(req.headers['x-custom'] || '')
       });
       res.end('target:' + req.method + ':' + body);

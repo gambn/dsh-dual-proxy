@@ -88,6 +88,7 @@ dsh plugin --profile web add /path/to/dsh-dual-proxy
 | `listenPort` | `7898` | 监听端口 |
 | `upstreamHost` | `127.0.0.1` | 第一个候选网关 |
 | `upstreamPort` | `7897` | 第一个候选网关的端口 |
+| `upstreamUrl` | 空 | 第一个候选的完整 URL，可含 `user:pass`；非空时覆盖 `upstreamHost`/`upstreamPort`，非法值直接报错 |
 | `gateways` | 空 | 额外候选网关，`host:port` 逗号分隔 |
 | `routeHostFetch` | `false` | 把宿主进程的 `fetch` 引到本代理（bundle patch 里默认打开） |
 | `healthUrl` | `https://api.deepseek.com` | 通道验证地址；空则关闭后台验证（443 仍做 TLS 探测，普通 HTTP 只按顺序试） |
@@ -95,6 +96,7 @@ dsh plugin --profile web add /path/to/dsh-dual-proxy
 | `fastFailTimeoutMs` | `2000` | 已知路径（缓存/首选）的建连超时 |
 | `cooldownMs` | `30000` | 失败网关的冷却时长；`0` 关闭 |
 | `retryNonIdempotentAfterSend` | `false` | 连接建立后失败时也重放 `POST`/`PATCH`（危险，默认关） |
+| `retryNonIdempotentWithIdempotencyKey` | `false` | 仅当请求带非空 `Idempotency-Key`/`X-Idempotency-Key` 时，允许发送后重放非幂等请求 |
 | `attemptTimeoutMs` | `5000` | 每次尝试/探测超时 |
 | `responseTimeoutMs` | `60000` | 普通 HTTP 等响应头的上限 |
 | `prefTtlMs` | `60000` | 每 host 偏好缓存 TTL |
@@ -123,6 +125,7 @@ node bin/dsh-dual-proxy.js --listen-port 7898 --upstream-port 7897 \
 | `--listen-port` | `7898` | 监听端口 |
 | `--upstream-host` | `127.0.0.1` | 第一个候选网关 |
 | `--upstream-port` | `7897` | 第一个候选网关的端口 |
+| `--upstream-url` | — | 第一个候选的完整 URL，可含 `user:pass`；非空时覆盖 host/port |
 | `--gateway` | — | 额外候选网关，可重复 |
 | `--health-url` | 空 | 通道验证地址 |
 | `--health-interval-ms` | `60000` | 健康检查间隔，`0` 关闭 |
@@ -133,8 +136,9 @@ node bin/dsh-dual-proxy.js --listen-port 7898 --upstream-port 7897 \
 | `--pref-ttl-ms` | `60000` | 每 host 偏好缓存 TTL |
 | `--no-verify-tls` | 关 | 跳过 443 的 TLS 探测 |
 | `--retry-non-idempotent-after-send` | 关 | 连接建立后失败时也重放 `POST`/`PATCH` |
+| `--retry-non-idempotent-with-idempotency-key` | 关 | 带 `Idempotency-Key` 时允许发送后重放 |
 
-环境变量同名（`LISTEN_HOST`、`LISTEN_PORT`、`UPSTREAM_HOST`、`UPSTREAM_PORT`、`GATEWAY`、`HEALTH_URL`、`HEALTH_INTERVAL_MS`、`FAST_FAIL_MS`、`COOLDOWN_MS`、`ATTEMPT_TIMEOUT_MS`、`RESPONSE_TIMEOUT_MS`、`PREF_TTL_MS`、`VERIFY_TLS=0`、`RETRY_NON_IDEMPOTENT_AFTER_SEND=1`）。
+环境变量同名（`LISTEN_HOST`、`LISTEN_PORT`、`UPSTREAM_HOST`、`UPSTREAM_PORT`、`UPSTREAM_URL`、`GATEWAY`、`HEALTH_URL`、`HEALTH_INTERVAL_MS`、`FAST_FAIL_MS`、`COOLDOWN_MS`、`ATTEMPT_TIMEOUT_MS`、`RESPONSE_TIMEOUT_MS`、`PREF_TTL_MS`、`VERIFY_TLS=0`、`RETRY_NON_IDEMPOTENT_AFTER_SEND=1`、`RETRY_NON_IDEMPOTENT_WITH_IDEMPOTENCY_KEY=1`）。
 
 systemd 用户服务模板在 `contrib/`。
 

@@ -88,6 +88,7 @@ Confirm that `~/.dsh/profiles/web/package.json` lists `dsh-dual-proxy` under `ds
 | `listenPort` | `7898` | Listen port |
 | `upstreamHost` | `127.0.0.1` | First candidate gateway |
 | `upstreamPort` | `7897` | Port of the first candidate |
+| `upstreamUrl` | empty | Full URL of the first candidate, may include `user:pass`; overrides `upstreamHost`/`upstreamPort` when set; an invalid value is a hard error |
 | `gateways` | empty | Extra candidates, comma-separated `host:port` |
 | `routeHostFetch` | `false` | Route the host's `fetch` through this proxy (enabled by the bundle patch) |
 | `healthUrl` | `https://api.deepseek.com` | Channel check URL; empty disables background checks (443 still gets the TLS probe; plain HTTP just tries in order) |
@@ -95,6 +96,7 @@ Confirm that `~/.dsh/profiles/web/package.json` lists `dsh-dual-proxy` under `ds
 | `fastFailTimeoutMs` | `2000` | Connect timeout for a known path (cache/favourite) |
 | `cooldownMs` | `30000` | Cooldown for a failed gateway; `0` disables |
 | `retryNonIdempotentAfterSend` | `false` | Also replay `POST`/`PATCH` after the connection was established (dangerous, off by default) |
+| `retryNonIdempotentWithIdempotencyKey` | `false` | Allow post-send replay of non-idempotent requests only when they carry a non-empty `Idempotency-Key`/`X-Idempotency-Key` |
 | `attemptTimeoutMs` | `5000` | Per-attempt/per-probe timeout |
 | `responseTimeoutMs` | `60000` | Upper bound for waiting on response headers |
 | `prefTtlMs` | `60000` | Per-host preference TTL |
@@ -123,6 +125,7 @@ node bin/dsh-dual-proxy.js --listen-port 7898 --upstream-port 7897 \
 | `--listen-port` | `7898` | Listen port |
 | `--upstream-host` | `127.0.0.1` | First candidate gateway |
 | `--upstream-port` | `7897` | Port of the first candidate |
+| `--upstream-url` | — | Full URL of the first candidate, may include `user:pass`; overrides host/port |
 | `--gateway` | — | Extra candidate, repeatable |
 | `--health-url` | empty | Channel check URL |
 | `--health-interval-ms` | `60000` | Health-check interval, `0` disables |
@@ -133,8 +136,9 @@ node bin/dsh-dual-proxy.js --listen-port 7898 --upstream-port 7897 \
 | `--pref-ttl-ms` | `60000` | Per-host preference TTL |
 | `--no-verify-tls` | off | Skip the TLS probe on 443 |
 | `--retry-non-idempotent-after-send` | off | Also replay `POST`/`PATCH` after the connection was established |
+| `--retry-non-idempotent-with-idempotency-key` | off | Allow post-send replay when `Idempotency-Key` is present |
 
-Environment variables use the same names (`LISTEN_HOST`, `LISTEN_PORT`, `UPSTREAM_HOST`, `UPSTREAM_PORT`, `GATEWAY`, `HEALTH_URL`, `HEALTH_INTERVAL_MS`, `FAST_FAIL_MS`, `COOLDOWN_MS`, `ATTEMPT_TIMEOUT_MS`, `RESPONSE_TIMEOUT_MS`, `PREF_TTL_MS`, `VERIFY_TLS=0`, `RETRY_NON_IDEMPOTENT_AFTER_SEND=1`).
+Environment variables use the same names (`LISTEN_HOST`, `LISTEN_PORT`, `UPSTREAM_HOST`, `UPSTREAM_PORT`, `UPSTREAM_URL`, `GATEWAY`, `HEALTH_URL`, `HEALTH_INTERVAL_MS`, `FAST_FAIL_MS`, `COOLDOWN_MS`, `ATTEMPT_TIMEOUT_MS`, `RESPONSE_TIMEOUT_MS`, `PREF_TTL_MS`, `VERIFY_TLS=0`, `RETRY_NON_IDEMPOTENT_AFTER_SEND=1`, `RETRY_NON_IDEMPOTENT_WITH_IDEMPOTENCY_KEY=1`).
 
 A systemd user-service template lives in `contrib/`.
 

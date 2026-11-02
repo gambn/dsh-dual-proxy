@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { isIdempotent, shouldRetryAfterSend } from '../src/retry-policy.js';
+import { hasIdempotencyKey, isIdempotent, shouldRetryAfterSend } from '../src/retry-policy.js';
 
 test('retry-policy：幂等集合', () => {
   for (const method of ['GET', 'HEAD', 'OPTIONS', 'TRACE', 'PUT', 'DELETE']) {
@@ -24,4 +24,26 @@ test('retry-policy：重放决策表', () => {
   assert.equal(shouldRetryAfterSend({ method: 'POST', sent: true, retryNonIdempotentAfterSend: true }), true);
   assert.equal(shouldRetryAfterSend({ method: 'PATCH', sent: true, ...base }), false);
   assert.equal(shouldRetryAfterSend({ method: 'PUT', sent: true, ...base }), true);
+});
+
+test('retry-policy：幂等键存在性（U13/A8）', () => {
+  assert.equal(hasIdempotencyKey({ 'idempotency-key': 'abc' }), true);
+  assert.equal(hasIdempotencyKey({ 'Idempotency-Key': ' abc ' }), true);
+  assert.equal(hasIdempotencyKey({ 'x-idempotency-key': 'abc' }), true);
+  assert.equal(hasIdempotencyKey({ 'idempotency-key': ['', 'abc'] }), true);
+  assert.equal(hasIdempotencyKey({ 'idempotency-key': '' }), false);
+  assert.equal(hasIdempotencyKey({ 'idempotency-key': '   ' }), false);
+  assert.equal(hasIdempotencyKey({ 'idempotency-key': ['', '  '] }), false);
+  assert.equal(hasIdempotencyKey({}), false);
+  assert.equal(hasIdempotencyKey(undefined), false);
+});
+
+test('retry-policy：键开关与全局开关的优先级（U14/C3）', () => {
+  const post = { method: 'POST', sent: true };
+  assert.equal(shouldRetryAfterSend({ ...post, retryNonIdempotentWithIdempotencyKey: true, idempotencyKey: true }), true);
+  assert.equal(shouldRetryAfterSend({ ...post, retryNonIdempotentWithIdempotencyKey: true, idempotencyKey: false }), false);
+  assert.equal(shouldRetryAfterSend({ ...post, retryNonIdempotentWithIdempotencyKey: false, idempotencyKey: true }), false);
+  assert.equal(shouldRetryAfterSend({ ...post, retryNonIdempotentAfterSend: true }), true);
+  assert.equal(shouldRetryAfterSend({ ...post, retryNonIdempotentAfterSend: true, retryNonIdempotentWithIdempotencyKey: true }), true);
+  assert.equal(shouldRetryAfterSend({ ...post, sent: false, retryNonIdempotentWithIdempotencyKey: false, idempotencyKey: false }), true);
 });

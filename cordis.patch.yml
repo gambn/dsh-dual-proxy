@@ -9,6 +9,8 @@
         listenPort: 7898
         upstreamHost: '127.0.0.1'
         upstreamPort: 7897
+        # 第一个候选的完整 URL（可含 user:pass）；非空时覆盖 upstreamHost/upstreamPort
+        upstreamUrl: ''
         # 额外候选网关（host:port，逗号分隔）；启动环境里的 HTTP(S)_PROXY 也会自动加入
         gateways: ''
         # 把宿主进程的 fetch（模型请求）引到本代理上
@@ -22,6 +24,8 @@
         cooldownMs: 30000
         # 默认 false：POST/PATCH 在连接建立后失败不再换路重放，回 502 说明可能已送达
         retryNonIdempotentAfterSend: false
+        # 带 Idempotency-Key 时允许发送后重放；默认关闭，且不验证上游是否真的去重
+        retryNonIdempotentWithIdempotencyKey: false
         attemptTimeoutMs: 5000
         # 普通 HTTP 等响应头的上限（响应体开始流之后不再计时）
         responseTimeoutMs: 60000

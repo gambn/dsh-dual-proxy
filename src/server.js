@@ -2,7 +2,7 @@ import http from 'node:http';
 import { connectDirect, connectViaProxy, probeTls, probeHttp, LEFTOVER } from './paths.js';
 import { createPref } from './pref.js';
 import { buildCandidates } from './gateways.js';
-import { shouldRetryAfterSend } from './retry-policy.js';
+import { hasIdempotencyKey, isIdempotent, shouldRetryAfterSend } from './retry-policy.js';
 
 const DEFAULT_LOG = (msg) => process.stderr.write('[dual-proxy] ' + msg + '\n');
 
@@ -98,6 +98,7 @@ export function createDispatcher(options) {
     fastFailTimeoutMs: 2000,
     cooldownMs: 30000,
     retryNonIdempotentAfterSend: false,
+    retryNonIdempotentWithIdempotencyKey: false,
     attemptTimeoutMs: 5000,
     responseTimeoutMs: 60000,
     prefTtlMs: 60000,
@@ -240,6 +241,7 @@ export function createDispatcher(options) {
     const host = normalizeHost(target.hostname);
     const port = Number(target.port || 80);
     const headers = sanitizeHeaders(req.headers, target.host);
+    const idempotencyKey = hasIdempotencyKey(req.headers);
 
     // 先缓冲请求体：失败换路时要能重放（模型调用多是 JSON POST）
     const chunks = [];
@@ -329,13 +331,20 @@ export function createDispatcher(options) {
               if (!shouldRetryAfterSend({
                 method: req.method,
                 sent: r.sent,
-                retryNonIdempotentAfterSend: opts.retryNonIdempotentAfterSend
+                retryNonIdempotentAfterSend: opts.retryNonIdempotentAfterSend,
+                retryNonIdempotentWithIdempotencyKey: opts.retryNonIdempotentWithIdempotencyKey,
+                idempotencyKey
               })) {
                 log(host + ' ' + gateway.id + ' failed after send: ' +
                   (r.err.code || r.err.message) + '; not replayed (' + req.method + ')');
                 res.writeHead(502);
                 res.end('non-idempotent request may have been delivered; not replayed');
                 return;
+              }
+              if (idempotencyKey && !isIdempotent(req.method) &&
+                opts.retryNonIdempotentWithIdempotencyKey && !opts.retryNonIdempotentAfterSend) {
+                log(host + ' ' + gateway.id + ' failed after send: ' +
+                  (r.err.code || r.err.message) + '; retrying (' + req.method + ', idempotency key)');
               }
               continue;
             }

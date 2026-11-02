@@ -828,3 +828,110 @@ test('A6c：健康检查认证失败时不把该代理设为首选', async () =>
     await target.close();
   }
 });
+
+// ---- 0.7.0 带幂等键的发送后重放（P1–P5、A7b） ----
+
+test('P1/P2：无键或键开关关闭时，POST 发送后失败仍不重放', async () => {
+  const stalled = await startSilent();
+  const second = await startCountingProxy('second');
+  const target = await startTarget();
+  try {
+    for (const [label, options] of [
+      ['无键', {}],
+      ['有键但开关关', { headers: { 'Idempotency-Key': 'key-1' } }]
+    ]) {
+      await withDispatcher(retryConfig({ upstreamPort: stalled.port, gateways: ['127.0.0.1:' + second.port] }), async (d, addr) => {
+        const r = await requestVia(addr.port, 'http://127.0.0.1:' + target.port + '/p1', {
+          method: 'POST', body: 'p', ...options
+        });
+        assert.equal(r.status, 502, label);
+        assert.equal(r.body, NOT_REPLAYED, label);
+      });
+    }
+    assert.equal(second.count(), 0);
+  } finally {
+    await second.close();
+    await stalled.close();
+    await target.close();
+  }
+});
+
+test('P3/P5：带键且开关打开时，发送后失败换下一条并转发键', async () => {
+  const stalled = await startSilent();
+  const second = await startCountingProxy('second');
+  const target = await startTarget();
+  try {
+    await withDispatcher(retryConfig({
+      upstreamPort: stalled.port,
+      gateways: ['127.0.0.1:' + second.port],
+      retryNonIdempotentWithIdempotencyKey: true
+    }), async (d, addr) => {
+      const r = await requestVia(addr.port, 'http://127.0.0.1:' + target.port + '/p3', {
+        method: 'POST',
+        body: 'payload',
+        headers: { 'Idempotency-Key': 'key-123' }
+      });
+      assert.equal(r.status, 200);
+      assert.equal(r.body, 'target:POST:payload');
+      assert.equal(r.headers['x-echo-idempotency-key'], 'key-123');
+      assert.equal(second.count(), 1);
+    });
+  } finally {
+    await second.close();
+    await stalled.close();
+    await target.close();
+  }
+});
+
+test('P4：键为空/空白时即使开关打开也不重放', async () => {
+  const stalled = await startSilent();
+  const second = await startCountingProxy('second');
+  const target = await startTarget();
+  try {
+    for (const value of ['', '   ']) {
+      await withDispatcher(retryConfig({
+        upstreamPort: stalled.port,
+        gateways: ['127.0.0.1:' + second.port],
+        retryNonIdempotentWithIdempotencyKey: true
+      }), async (d, addr) => {
+        const r = await requestVia(addr.port, 'http://127.0.0.1:' + target.port + '/p4', {
+          method: 'POST', body: 'p', headers: { 'Idempotency-Key': value }
+        });
+        assert.equal(r.status, 502);
+        assert.equal(r.body, NOT_REPLAYED);
+      });
+    }
+    assert.equal(second.count(), 0);
+  } finally {
+    await second.close();
+    await stalled.close();
+    await target.close();
+  }
+});
+
+test('A7b：重放日志含“idempotency key”，不含键值', async () => {
+  const stalled = await startSilent();
+  const second = await startCountingProxy('second');
+  const target = await startTarget();
+  const messages = [];
+  try {
+    await withDispatcher(retryConfig({
+      upstreamPort: stalled.port,
+      gateways: ['127.0.0.1:' + second.port],
+      retryNonIdempotentWithIdempotencyKey: true,
+      log: (msg) => messages.push(msg)
+    }), async (d, addr) => {
+      const r = await requestVia(addr.port, 'http://127.0.0.1:' + target.port + '/log', {
+        method: 'POST', body: 'p', headers: { 'Idempotency-Key': 'secret-key-value' }
+      });
+      assert.equal(r.status, 200);
+    });
+    const text = messages.join('\n');
+    assert.ok(text.includes('idempotency key'));
+    assert.ok(!text.includes('secret-key-value'));
+  } finally {
+    await second.close();
+    await stalled.close();
+    await target.close();
+  }
+});

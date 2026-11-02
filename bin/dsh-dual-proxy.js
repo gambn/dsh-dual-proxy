@@ -35,13 +35,16 @@ function usage() {
     '  --no-verify-tls         skip the TLS reachability probe on 443',
     '  --retry-non-idempotent-after-send  replay POST/PATCH after the body may have',
     '                          been sent (dangerous; default off)',
+    '  --retry-non-idempotent-with-idempotency-key',
+    '                          replay POST/PATCH after send when Idempotency-Key is present',
     '  -h, --help              show this help',
     '  -v, --version           print version',
     '',
     'Env fallbacks: LISTEN_HOST / LISTEN_PORT / UPSTREAM_HOST / UPSTREAM_PORT / UPSTREAM_URL /',
     '               GATEWAY / HEALTH_URL / HEALTH_INTERVAL_MS / FAST_FAIL_MS /',
     '               COOLDOWN_MS / ATTEMPT_TIMEOUT_MS / RESPONSE_TIMEOUT_MS /',
-    '               PREF_TTL_MS / VERIFY_TLS=0 / RETRY_NON_IDEMPOTENT_AFTER_SEND=1',
+    '               PREF_TTL_MS / VERIFY_TLS=0 / RETRY_NON_IDEMPOTENT_AFTER_SEND=1 /',
+    '               RETRY_NON_IDEMPOTENT_WITH_IDEMPOTENCY_KEY=1',
     ''
   ].join('\n'));
 }
@@ -77,6 +80,7 @@ export function parseArgs(args, env = {}) {
     fastFailTimeoutMs: integer('FAST_FAIL_MS', envValue(env, 'FAST_FAIL_MS') ?? 2000, 100, 60000),
     cooldownMs: integer('COOLDOWN_MS', envValue(env, 'COOLDOWN_MS') ?? 30000, 0, 600000),
     retryNonIdempotentAfterSend: env.RETRY_NON_IDEMPOTENT_AFTER_SEND === '1',
+    retryNonIdempotentWithIdempotencyKey: env.RETRY_NON_IDEMPOTENT_WITH_IDEMPOTENCY_KEY === '1',
     verifyTls: env.VERIFY_TLS !== '0'
   };
 
@@ -103,6 +107,7 @@ export function parseArgs(args, env = {}) {
       case '--pref-ttl-ms': opts.prefTtlMs = integer(arg, next(), 0, 3600000); break;
       case '--no-verify-tls': opts.verifyTls = false; break;
       case '--retry-non-idempotent-after-send': opts.retryNonIdempotentAfterSend = true; break;
+      case '--retry-non-idempotent-with-idempotency-key': opts.retryNonIdempotentWithIdempotencyKey = true; break;
       case '-h':
       case '--help': opts.help = true; break;
       case '-v':
