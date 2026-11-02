@@ -49,6 +49,8 @@
     "cordis.patch.yml",
     "README.md",
     "README.en.md",
+    "SECURITY.md",
+    "CHANGELOG.md",
     "LICENSE"
   ],
   "author": "Gambn",

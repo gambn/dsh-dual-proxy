@@ -51,9 +51,11 @@ dsh plugin --profile web add "$PWD"
 
 ## 行为
 
-- 候选网关 = `upstreamHost:upstreamPort` + `gateways` + 启动环境的 `HTTP(S)_PROXY`/`ALL_PROXY`，去重并排除自身监听端口，最后补 `direct`。
+- 候选网关 = `upstreamHost:upstreamPort`（或 `upstreamUrl`）+ `gateways` + 启动环境的 `HTTP(S)_PROXY`/`ALL_PROXY`，去重并排除自身监听端口，最后补 `direct`。
+- **上游代理认证**：`upstreamUrl`、`gateways` 或环境变量里的 HTTP 代理 URL 可带 `user:pass`；连接代理时会带 `Proxy-Authorization: Basic`。0.7.0 只支持 `http://` 上游代理，`https://` 会明确报错；Basic 只是 base64，不是加密，只建议回环或受信任网络。
 - **CONNECT（HTTPS）**：443 上先对候选做 TLS 握手探测，通过的才用来开隧道；失败换下一条。
 - **普通 HTTP**：请求体先缓冲（上限 8 MB），按同一顺序换路重放；建连用 `attemptTimeoutMs`（已知路径用 `fastFailTimeoutMs`），等响应头用 `responseTimeoutMs`，响应体开始流之后不再计时。
+- **幂等键重放**：打开 `retryNonIdempotentWithIdempotencyKey` 后，非幂等请求只有在带非空 `Idempotency-Key`/`X-Idempotency-Key` 时才允许发送后重放；代理不验证上游是否真的去重。
 - **重放策略（仅普通 HTTP，CONNECT 隧道不重放）**：到网关/目标的 TCP 连接还没建立就失败时，任何方法都重放；连接建立后失败时，只重放幂等方法（`GET`/`HEAD`/`OPTIONS`/`TRACE`/`PUT`/`DELETE`）。`POST`/`PATCH` 等默认停止并回 502，响应体是 `non-idempotent request may have been delivered; not replayed`；需要旧行为时打开 `retryNonIdempotentAfterSend`。
 - **已知路径的快失败只覆盖建连阶段**：缓存或健康首选的那条网关，TCP 连不上时 2 秒内换路；如果它连上了却迟迟不回响应头，仍要等满 `responseTimeoutMs`（默认 60 秒）。
 - **健康检查**：每 `healthIntervalMs` 用 `GET healthUrl` 验证一次通道，`<500` 就算通（401/403 说明端点活着）；通过者设为全局首选，全部失败则清掉首选、下次请求重新扫描。设为 `0` 关闭。
@@ -64,7 +66,7 @@ dsh plugin --profile web add "$PWD"
 - **逐跳标头**按 RFC 9110 过滤（`Connection` 及其点名的字段、`Proxy-Connection`、`Transfer-Encoding` 等），`Host` 重写为目标主机；响应方向的逐跳标头同样清掉。
 - **IPv6**：CONNECT 支持 `[::1]:443` 这类字面量，host 统一去掉方括号、转小写、去掉 FQDN 末尾的点。
 - **关闭**最多等 `shutdownTimeoutMs`（默认 1.5 秒，内部选项，不在设置页与 CLI 暴露）让在途请求自然结束，超时后强制断开所有 socket。
-- 全部候选都失败时回 502；非幂等请求在连接建立后失败且未开 `retryNonIdempotentAfterSend` 时也会立即回 502，不再尝试剩余候选。
+- 全部候选都失败时回 502；非幂等请求在连接建立后失败且未开 `retryNonIdempotentAfterSend`、也没有可用的幂等键开关时，也会立即回 502，不再尝试剩余候选。
 - 日志只写主机、网关与原因，不记录任何请求内容。
 
 ## 作为 DSH 插件
@@ -155,6 +157,8 @@ npm test
 ## 边界
 
 - 只处理 HTTP/1.1 的 `CONNECT` 与普通 HTTP；不做透明代理、不接管 UDP。
+- 普通 HTTP 请求在网关连上后要等满 `responseTimeoutMs`（默认 60 秒）才判定响应头超时；0.7.0 不缩短这个等待，幂等键只改变超时后的重放决策。
+- CONNECT 隧道建立后代理只转发字节，TLS 端到端；隧道内失败无法换路，要覆盖只能做 MITM 解密，和本项目“不拦截”的定位冲突。
 - 不校验证书，不缓存内容，不做鉴权。默认只绑回环；把 `listenHost` 改成非回环地址会在启动时告警——那等于开放一个无鉴权代理，风险自负。
 - 不支持上游代理认证：`http://user:pass@host:port` 里的凭证会被丢弃，实际以匿名方式连接上游。
 - 只负责「到不到得了」，不负责「信不信得过」——证书校验仍是客户端的责任。

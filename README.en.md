@@ -51,9 +51,11 @@ The health check runs the same candidate list with a real request; the first one
 
 ## Behaviour
 
-- Candidate gateways = `upstreamHost:upstreamPort` + `gateways` + `HTTP(S)_PROXY`/`ALL_PROXY` from the launch environment, deduplicated, excluding the proxy's own listen port, with `direct` appended last.
+- Candidate gateways = `upstreamHost:upstreamPort` (or `upstreamUrl`) + `gateways` + `HTTP(S)_PROXY`/`ALL_PROXY` from the launch environment, deduplicated, excluding the proxy's own listen port, with `direct` appended last.
+- **Upstream proxy authentication**: `upstreamUrl`, `gateways`, or a proxy URL in the launch environment may carry `user:pass`; proxy connections then send `Proxy-Authorization: Basic`. 0.7.0 supports only `http://` upstream proxies and rejects `https://` explicitly. Basic is base64, not encryption; use it only on loopback or trusted networks.
 - **CONNECT (HTTPS)**: on 443, each candidate gets a TLS handshake probe; only a candidate that passes is used to open the tunnel. On failure, the next one is tried.
 - **Plain HTTP**: the request body is buffered first (8 MB limit), and the request is replayed along the same candidate order. Connect uses `attemptTimeoutMs` (`fastFailTimeoutMs` for a known path), waiting for response headers uses `responseTimeoutMs`; the timer stops once the response body starts streaming.
+- **Idempotency-key replay**: with `retryNonIdempotentWithIdempotencyKey` on, a non-idempotent request is replayed after send only when it carries a non-empty `Idempotency-Key`/`X-Idempotency-Key`; the proxy does not verify that the upstream actually deduplicates.
 - **Replay policy (plain HTTP only; CONNECT tunnels are never replayed)**: if the TCP connection to the gateway/target is not established yet, any method is replayed. Once the connection is established, only idempotent methods are replayed (`GET`/`HEAD`/`OPTIONS`/`TRACE`/`PUT`/`DELETE`). `POST`/`PATCH` and other methods stop by default with 502 and the body `non-idempotent request may have been delivered; not replayed`; enable `retryNonIdempotentAfterSend` for the old behaviour.
 - **Fast-fail covers the connect phase only**: if the cached or health-preferred gateway cannot connect over TCP, it is skipped within 2 seconds; if it connects but never returns response headers, the request still waits the full `responseTimeoutMs` (60 seconds by default).
 - **Health check**: every `healthIntervalMs`, a `GET healthUrl` validates the channel; anything below 500 counts as reachable (401/403 means the endpoint is alive). The winner becomes the global favourite; if all candidates fail, the favourite is cleared and the next request re-scans. Set to `0` to disable.
@@ -64,7 +66,7 @@ The health check runs the same candidate list with a real request; the first one
 - **Hop-by-hop headers** are stripped per RFC 9110 (`Connection` and the fields it names, `Proxy-Connection`, `Transfer-Encoding`, etc.), and `Host` is rewritten to the target; response hop-by-hop headers are stripped too.
 - **IPv6**: CONNECT accepts literals such as `[::1]:443`; hosts are normalised by removing brackets, lowercasing, and dropping a trailing dot.
 - **Shutdown** waits up to `shutdownTimeoutMs` (1.5 seconds by default; an internal option, not exposed in the settings page or CLI) for in-flight requests, then force-destroys all sockets.
-- A 502 is returned when every candidate fails, and also immediately when a non-idempotent request fails after the connection is established with `retryNonIdempotentAfterSend` off (remaining candidates are not tried).
+- A 502 is returned when every candidate fails, and also immediately when a non-idempotent request fails after the connection is established with `retryNonIdempotentAfterSend` off and no usable idempotency-key switch (remaining candidates are not tried).
 - Logs contain the host, gateway and reason only; request contents are never logged.
 
 ## As a DSH plugin
@@ -155,6 +157,8 @@ The suite covers: HTTP direct fallback, forwarding through a fake proxy, skippin
 ## Boundaries
 
 - Only HTTP/1.1 `CONNECT` and plain HTTP; no transparent proxying and no UDP.
+- A plain HTTP request waits up to `responseTimeoutMs` (60 seconds by default) for response headers after the gateway connection is established; 0.7.0 does not shorten that wait, and the idempotency key only changes the replay decision after the timeout.
+- Once a CONNECT tunnel is established the proxy only forwards bytes and TLS is end-to-end; an in-tunnel failure cannot be failed over. Covering it would require MITM decryption, which conflicts with this project's no-interception design.
 - Certificates are not verified, contents are not cached, and there is no authentication. It binds to loopback by default; changing `listenHost` to a non-loopback address logs a warning at startup — that turns it into an unauthenticated proxy, at your own risk.
 - Upstream proxy authentication is not supported: credentials in `http://user:pass@host:port` are dropped and the upstream is contacted anonymously.
 - It only answers "can I get there", not "can I trust it" — certificate validation remains the client's responsibility.
