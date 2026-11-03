@@ -1,6 +1,6 @@
 {
   "name": "dsh-dual-proxy",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "Agent gateway manager: picks a working gateway among proxies and direct, verifies the model channel, and switches online; DSH plugin plus standalone CLI.",
   "license": "MIT",
   "keywords": [

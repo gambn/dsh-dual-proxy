@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import net from 'node:net';
-import { createDispatcher, mergeOptions } from '../src/server.js';
+import http from 'node:http';
+import { createDispatcher, mergeOptions, IDENTITY_PATH, IDENTITY_HEADER } from '../src/server.js';
 
 const silent = () => {};
 
@@ -72,6 +73,25 @@ test('HTTP 入口：非法 target 与 https:// target 都回 400', async () => {
   try {
     assert.match(await raw('GET not-a-url'), /^HTTP\/1\.1 400/);
     assert.match(await raw('GET https://example.com/'), /^HTTP\/1\.1 400/);
+  } finally {
+    await d.close();
+  }
+});
+
+test('身份端点：GET /__agent_dual_proxy__ 返回本代理标记', async () => {
+  const d = createDispatcher({ listenPort: 0, log: silent });
+  const addr = await d.listen();
+  try {
+    const result = await new Promise((resolve, reject) => {
+      http.get({ host: '127.0.0.1', port: addr.port, path: IDENTITY_PATH, agent: false }, (res) => {
+        let body = '';
+        res.on('data', (chunk) => { body += chunk; });
+        res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body }));
+      }).on('error', reject);
+    });
+    assert.equal(result.status, 200);
+    assert.equal(result.headers[IDENTITY_HEADER], '1');
+    assert.equal(result.body.trim(), 'agent-dual-proxy');
   } finally {
     await d.close();
   }
