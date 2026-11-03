@@ -7,7 +7,7 @@ function read(relative) {
 }
 
 test('I20：重放/认证配置面在 Config/plainConfig/patch/两份 README/CLI/env 一致', () => {
-  const index = read('../src/index.js');
+  const index = read('../src/adapters/dsh.js');
   assert.match(index, /retryNonIdempotentAfterSend: live\(Schema\.boolean\(\)\.default\(false\)\)/);
   assert.match(index, /retryNonIdempotentAfterSend: fieldValue\(config, 'retryNonIdempotentAfterSend', false\)/);
   assert.match(index, /upstreamUrl: live\(Schema\.string\(\)\.default\(''\)\)/);
