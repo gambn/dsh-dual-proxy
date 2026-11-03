@@ -144,6 +144,19 @@ Environment variables use the same names (`LISTEN_HOST`, `LISTEN_PORT`, `UPSTREA
 
 A systemd user-service template lives in `contrib/`.
 
+## With Claude Code
+
+Claude Code is a native binary, so the DSH trick of routing the host's `fetch` inside the process does not apply. The launcher wraps it instead: the proxy listens inside the launcher process, which then points the proxy environment variables at it before starting `claude`.
+
+```bash
+# listens on 7896 by default; everything after `--` goes to claude
+claude-dual-proxy --listen-port 7896 --gateway 127.0.0.1:12334 -- --resume
+```
+
+The launcher resolves candidate gateways exactly like the standalone process, sets `HTTP_PROXY`/`HTTPS_PROXY` (both cases) and `ALL_PROXY` for the child, replaces a socks `ALL_PROXY` inherited from the launch environment, adds loopback addresses to `NO_PROXY`, and closes the proxy when `claude` exits. `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, and other child variables are left untouched.
+
+Host adapters and core: the package entry (`src/index.js`) is still the DSH plugin, implemented in `src/adapters/dsh.js`; host-neutral core is exported as `dsh-dual-proxy/core` (`createDispatcher`, `resolveUpstream`, `collectGateways`, ...) so other hosts can depend on that layer alone.
+
 ## Tests
 
 ```bash

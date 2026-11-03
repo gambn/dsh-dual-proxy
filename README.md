@@ -144,6 +144,19 @@ node bin/dsh-dual-proxy.js --listen-port 7898 --upstream-port 7897 \
 
 systemd 用户服务模板在 `contrib/`。
 
+## 配合 Claude Code
+
+Claude Code 是原生二进制，不能像 DSH 那样把 `fetch` 引到进程内；适配方式是用启动器包一层：代理在启动器进程里监听，再把代理环境变量指向它并启动 `claude`。
+
+```bash
+# 默认监听 7896；`--` 之后原样交给 claude
+claude-dual-proxy --listen-port 7896 --gateway 127.0.0.1:12334 -- --resume
+```
+
+启动器会：按与独立进程相同的方式解析候选网关；给子进程设置 `HTTP_PROXY`/`HTTPS_PROXY`（大小写各一份）和 `ALL_PROXY`，并替换掉启动环境里 socks 的 `ALL_PROXY`；把回环地址并入 `NO_PROXY`；`claude` 退出时关闭代理。子进程的 `ANTHROPIC_BASE_URL`、`ANTHROPIC_AUTH_TOKEN` 等变量保持不变。
+
+宿主适配层与核心的边界：包入口（`src/index.js`）仍是 DSH 插件，实现在 `src/adapters/dsh.js`；宿主无关的核心通过 `dsh-dual-proxy/core` 导出（`createDispatcher`、`resolveUpstream`、`collectGateways` 等），其他宿主可以只依赖这一层。
+
 ## 测试
 
 ```bash

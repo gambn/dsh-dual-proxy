@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `claude-dual-proxy` launcher: starts the proxy, points the child Claude Code process's `HTTP(S)_PROXY`/`ALL_PROXY` at it, adds loopback to `NO_PROXY`, and closes the proxy when `claude` exits. Listens on 7896 by default so it does not collide with the DSH profiles.
+- `dsh-dual-proxy/core` export with the host-neutral dispatcher and gateway helpers.
+
+### Changed
+
+- The DSH cordis entry moved to `src/adapters/dsh.js`; `src/index.js` re-exports it, so the package entry and existing imports keep working.
+
 ## 0.7.0
 
 ### Added
