@@ -96,3 +96,98 @@ test('身份端点：GET /__agent_dual_proxy__ 返回本代理标记', async () 
     await d.close();
   }
 });
+
+/** 65000 以上避开本机滚动 TIME-WAIT 常用的临时端口段。 */
+function isFree(port) {
+  return new Promise((resolve) => {
+    const s = net.createServer();
+    s.once('error', () => resolve(false));
+    s.listen(port, '127.0.0.1', () => s.close(() => resolve(true)));
+  });
+}
+
+async function consecutiveHighPorts() {
+  for (let port = 62000; port < 62900; port += 2) {
+    if (await isFree(port) && await isFree(port + 1)) return port;
+  }
+  throw new Error('no consecutive free high ports');
+}
+
+test('listen：端口占用时按 portFallback 自动退避并返回实际端口', async () => {
+  const holder = net.createServer();
+  await new Promise((resolve) => holder.listen(0, '127.0.0.1', resolve));
+  const busy = holder.address().port;
+  const d = createDispatcher({ listenPort: busy, portFallback: 5, log: silent });
+  try {
+    const addr = await d.listen();
+    assert.notEqual(addr.port, busy);
+    assert.ok(addr.port > busy && addr.port <= busy + 5);
+  } finally {
+    await d.close();
+    await new Promise((resolve) => holder.close(resolve));
+  }
+});
+
+test('listen：退避后实际端口不再出现在候选里（自环防护）', async () => {
+  const base = await consecutiveHighPorts();
+  const holder = net.createServer();
+  await new Promise((resolve) => holder.listen(base, '127.0.0.1', resolve));
+  const d = createDispatcher({
+    listenPort: base,
+    portFallback: 1,
+    upstreamPort: 1,
+    gateways: ['127.0.0.1:' + (base + 1)],
+    log: silent
+  });
+  try {
+    const addr = await d.listen();
+    assert.equal(addr.port, base + 1);
+    const ids = d.candidates.map((candidate) => candidate.id);
+    assert.ok(!ids.includes('127.0.0.1:' + (base + 1)));
+    assert.ok(ids.includes('127.0.0.1:1'));
+    assert.ok(ids.includes('direct'));
+  } finally {
+    await d.close();
+    await new Promise((resolve) => holder.close(resolve));
+  }
+});
+
+test('listen：EADDRINUSE 诊断区分 LISTEN 冲突', async () => {
+  const holder = net.createServer();
+  await new Promise((resolve) => holder.listen(0, '127.0.0.1', resolve));
+  const busy = holder.address().port;
+  const d = createDispatcher({ listenPort: busy, portFallback: 0, log: silent });
+  try {
+    await assert.rejects(() => d.listen(), (err) => {
+      assert.match(err.message, /a process is listening/);
+      assert.match(err.message, /--listen-port/);
+      return true;
+    });
+  } finally {
+    await d.close();
+    await new Promise((resolve) => holder.close(resolve));
+  }
+});
+
+test('listen：TIME-WAIT 与 unknown 诊断分支（注入探测）', async () => {
+  const holder = net.createServer();
+  await new Promise((resolve) => holder.listen(0, '127.0.0.1', resolve));
+  const busy = holder.address().port;
+  for (const [kind, pattern] of [['timewait', /TIME-WAIT/], ['unknown', /may be listening/]]) {
+    const d = createDispatcher({
+      listenPort: busy,
+      portFallback: 0,
+      log: silent,
+      listenProbe: async () => kind
+    });
+    try {
+      await assert.rejects(() => d.listen(), (err) => {
+        assert.match(err.message, pattern);
+        return true;
+      });
+    } finally {
+      await d.close();
+    }
+  }
+  await new Promise((resolve) => holder.close(resolve));
+});

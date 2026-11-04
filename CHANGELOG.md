@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.7.2
+
+### Added
+
+- `portFallback` / `--port-fallback` / `PORT_FALLBACK`: retry port+1 on `EADDRINUSE` and log the actual bound port. Plugin default `0` keeps the known 7898 entry; `claude-dual-proxy` defaults to 10 and passes the actual port to the child.
+- `--print-config` (alias `--dry-run`) for the standalone CLI: prints the effective listen/upstream/gateway/health/timeout/replay configuration and exits. Auth is shown as booleans; health URL userinfo, query, and hash are stripped.
+- `EADDRINUSE` diagnostics distinguish a listening process from TIME-WAIT sockets and use platform-specific hints (`ss` or `Get-NetTCPConnection`).
+
+### Changed
+
+- After a port fallback, candidates are rebuilt against the actual bound port so a gateway cannot point at the proxy itself.
+- socks upstream candidates are skipped with a self-explanatory warning, deduplicated across case variants of the environment variables.
+- README troubleshooting covers TIME-WAIT, socks warnings, and the fixed-vs-fallback port tradeoff.
+
+### Notes
+
+- Node floor remains `>=22.19.0` and `undici` remains 8.12.3 because `routeHostFetch` depends on its global dispatcher.
+
 ## 0.7.1
 
 ### Added

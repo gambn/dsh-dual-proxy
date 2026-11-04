@@ -1,4 +1,5 @@
 import http from 'node:http';
+import net from 'node:net';
 import { connectDirect, connectViaProxy, probeTls, probeHttp, LEFTOVER } from './paths.js';
 import { createPref } from './pref.js';
 import { buildCandidates } from './gateways.js';
@@ -48,6 +49,66 @@ function sanitizeHeaders(headers, targetHost) {
   return Object.assign(stripHopByHop(headers), { host: targetHost });
 }
 
+/** 端口上是谁：listener（有进程在听）、timewait（无监听但有 TIME-WAIT）、unknown。 */
+function probeListenerKind(host, port, timeoutMs = 500) {
+  const target = host === '0.0.0.0' || host === '::' ? '127.0.0.1' : host;
+  return new Promise((resolve) => {
+    const sock = net.connect({ host: target, port });
+    let settled = false;
+    const done = (kind) => {
+      if (settled) return;
+      settled = true;
+      sock.destroy();
+      resolve(kind);
+    };
+    sock.setTimeout(timeoutMs, () => done('unknown'));
+    sock.once('connect', () => done('listener'));
+    sock.once('error', (err) => done(err && err.code === 'ECONNREFUSED' ? 'timewait' : 'unknown'));
+  });
+}
+
+/** 端口排查命令：Windows 没有 ss，换成 Get-NetTCPConnection。 */
+export function portHints(port, platform = process.platform) {
+  if (platform === 'win32') {
+    return {
+      listen: 'Get-NetTCPConnection -LocalPort ' + port + ' -State Listen',
+      all: 'Get-NetTCPConnection -LocalPort ' + port
+    };
+  }
+  return {
+    listen: 'ss -tln | grep :' + port,
+    all: 'ss -tan | grep :' + port
+  };
+}
+
+/** EADDRINUSE 的可操作诊断：区分 LISTEN 冲突与 TIME-WAIT 冲突。 */
+function listenDiagnostic(err, host, port, attempts, kind) {
+  const hints = portHints(port);
+  let detail;
+  if (kind === 'listener') {
+    detail = 'a process is listening on this port (check `' + hints.listen + '`); stop it';
+  } else if (kind === 'timewait') {
+    detail = 'nothing is listening, but TIME-WAIT sockets created by another process block reuse even with '
+      + 'SO_REUSEADDR (check `' + hints.all + '`); they usually clear within ~60s';
+  } else {
+    detail = 'a process may be listening (check `' + hints.listen + '`) or TIME-WAIT sockets may block '
+      + 'reuse (check `' + hints.all + '`)';
+  }
+  const next = attempts > 0
+    ? ' Increase --port-fallback or choose another --listen-port.'
+    : (kind === 'timewait'
+      ? ' Choose another --listen-port or enable --port-fallback.'
+      : ' Choose another --listen-port.');
+  const out = new Error(
+    'listen EADDRINUSE on ' + host + ':' + port + ' — ' + detail + '.'
+    + (attempts > 0 ? ' Tried ' + (attempts + 1) + ' ports.' : '')
+    + next
+  );
+  out.code = 'EADDRINUSE';
+  out.cause = err;
+  return out;
+}
+
 /** 解析健康检查地址；只接受 http/https。 */
 function parseHealthUrl(value) {
   if (!value) return null;
@@ -94,6 +155,8 @@ export function createDispatcher(options) {
   const opts = mergeOptions({
     listenHost: '127.0.0.1',
     listenPort: 7898,
+    portFallback: 0,
+    listenProbe: probeListenerKind,
     upstreamHost: '127.0.0.1',
     upstreamPort: 7897,
     gateways: [],
@@ -114,18 +177,30 @@ export function createDispatcher(options) {
 
   const log = opts.log;
   const pref = createPref(opts.prefTtlMs, undefined, opts.prefMaxSize);
-  const candidates = buildCandidates(
-    Object.assign(
-      { host: opts.upstreamHost, port: opts.upstreamPort },
-      opts.upstreamAuth ? { auth: opts.upstreamAuth } : {}
-    ),
+  const upstreamCandidate = Object.assign(
+    { host: opts.upstreamHost, port: opts.upstreamPort },
+    opts.upstreamAuth ? { auth: opts.upstreamAuth } : {}
+  );
+  const buildFor = (self) => buildCandidates(
+    upstreamCandidate,
     opts.gateways,
-    { host: opts.listenHost, port: opts.listenPort },
+    self,
     (subject, reason) => log('gateway warning: ' + subject + ': ' + reason)
   );
-  const publicCandidates = candidates.map((gateway) => (gateway.direct
+  const publicView = (list) => list.map((gateway) => (gateway.direct
     ? { id: gateway.id, direct: true }
     : { id: gateway.id, host: gateway.host, port: gateway.port }));
+  const candidates = buildFor({ host: opts.listenHost, port: opts.listenPort });
+  const publicCandidates = publicView(candidates);
+
+  /** 端口退避后按实际监听端口重建候选，避免把自己当网关形成自环。 */
+  function rebindSelf(addr) {
+    const rebuilt = buildFor({ host: addr.address, port: addr.port });
+    candidates.length = 0;
+    candidates.push(...rebuilt);
+    publicCandidates.length = 0;
+    publicCandidates.push(...publicView(candidates));
+  }
   const health = parseHealthUrl(opts.healthUrl);
   const healthTimeoutMs = opts.healthTimeoutMs || opts.attemptTimeoutMs;
 
@@ -497,17 +572,38 @@ export function createDispatcher(options) {
     pref,
     candidates: publicCandidates,
     listen() {
-      return new Promise((resolve, reject) => {
+      const listenOnce = (port) => new Promise((resolve, reject) => {
         const onError = (err) => {
           server.removeListener('error', onError);
           reject(err);
         };
         server.once('error', onError);
-        server.listen(opts.listenPort, opts.listenHost, () => {
+        server.listen(port, opts.listenHost, () => {
           server.removeListener('error', onError);
           resolve(server.address());
         });
       });
+
+      const retries = Math.max(0, Math.floor(opts.portFallback || 0));
+      return (async () => {
+        let port = opts.listenPort;
+        for (let attempt = 0; ; attempt += 1) {
+          try {
+            const addr = await listenOnce(port);
+            // 退避后实际端口可能变了：重建候选，别把自己当网关
+            if (addr.port !== opts.listenPort || addr.address !== opts.listenHost) rebindSelf(addr);
+            return addr;
+          } catch (err) {
+            if (err.code !== 'EADDRINUSE') throw err;
+            if (attempt >= retries || port >= 65535) {
+              const kind = await opts.listenProbe(opts.listenHost, port);
+              throw listenDiagnostic(err, opts.listenHost, port, attempt, kind);
+            }
+            log('listen: ' + port + ' is in use (EADDRINUSE), trying ' + (port + 1));
+            port += 1;
+          }
+        }
+      })();
     },
     close() {
       stopHealth();

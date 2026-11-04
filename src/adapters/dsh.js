@@ -26,6 +26,7 @@ function live(schema) {
 export const Config = Schema.object({
   listenHost: live(Schema.string().default('127.0.0.1')),
   listenPort: live(Schema.number().min(1).max(65535).step(1).default(7898)),
+  portFallback: live(Schema.number().min(0).max(100).step(1).default(0)),
   upstreamHost: live(Schema.string().default('127.0.0.1')),
   upstreamPort: live(Schema.number().min(1).max(65535).step(1).default(7897)),
   upstreamUrl: live(Schema.string().default('')),
@@ -63,6 +64,7 @@ function plainConfig(config) {
   return {
     listenHost: fieldValue(config, 'listenHost', '127.0.0.1'),
     listenPort: fieldValue(config, 'listenPort', 7898),
+    portFallback: fieldValue(config, 'portFallback', 0),
     upstreamHost: fieldValue(config, 'upstreamHost', '127.0.0.1'),
     upstreamPort: fieldValue(config, 'upstreamPort', 7897),
     upstreamUrl: fieldValue(config, 'upstreamUrl', ''),

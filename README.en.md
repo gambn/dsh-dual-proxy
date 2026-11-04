@@ -88,6 +88,7 @@ Confirm that `~/.dsh/profiles/web/package.json` lists `dsh-dual-proxy` under `ds
 | :--- | :--- | :--- |
 | `listenHost` | `127.0.0.1` | Listen address |
 | `listenPort` | `7898` | Listen port |
+| `portFallback` | `0` | On `EADDRINUSE`, try port+1 up to this many times; `0` keeps the fixed entry point |
 | `upstreamHost` | `127.0.0.1` | First candidate gateway |
 | `upstreamPort` | `7897` | Port of the first candidate |
 | `upstreamUrl` | empty | Full URL of the first candidate, may include `user:pass`; overrides `upstreamHost`/`upstreamPort` when set; an invalid value is a hard error |
@@ -125,6 +126,8 @@ node bin/dsh-dual-proxy.js --listen-port 7898 --upstream-port 7897 \
 | :--- | :--- | :--- |
 | `--listen-host` | `127.0.0.1` | Listen address |
 | `--listen-port` | `7898` | Listen port |
+| `--port-fallback` | `0` | On `EADDRINUSE`, try port+1 up to this many times |
+| `--print-config` | — | Print the effective config and exit (alias `--dry-run`) |
 | `--upstream-host` | `127.0.0.1` | First candidate gateway |
 | `--upstream-port` | `7897` | Port of the first candidate |
 | `--upstream-url` | — | Full URL of the first candidate, may include `user:pass`; overrides host/port |
@@ -140,7 +143,7 @@ node bin/dsh-dual-proxy.js --listen-port 7898 --upstream-port 7897 \
 | `--retry-non-idempotent-after-send` | off | Also replay `POST`/`PATCH` after the connection was established |
 | `--retry-non-idempotent-with-idempotency-key` | off | Allow post-send replay when `Idempotency-Key` is present |
 
-Environment variables use the same names (`LISTEN_HOST`, `LISTEN_PORT`, `UPSTREAM_HOST`, `UPSTREAM_PORT`, `UPSTREAM_URL`, `GATEWAY`, `HEALTH_URL`, `HEALTH_INTERVAL_MS`, `FAST_FAIL_MS`, `COOLDOWN_MS`, `ATTEMPT_TIMEOUT_MS`, `RESPONSE_TIMEOUT_MS`, `PREF_TTL_MS`, `VERIFY_TLS=0`, `RETRY_NON_IDEMPOTENT_AFTER_SEND=1`, `RETRY_NON_IDEMPOTENT_WITH_IDEMPOTENCY_KEY=1`).
+Environment variables use the same names (`LISTEN_HOST`, `LISTEN_PORT`, `PORT_FALLBACK`, `UPSTREAM_HOST`, `UPSTREAM_PORT`, `UPSTREAM_URL`, `GATEWAY`, `HEALTH_URL`, `HEALTH_INTERVAL_MS`, `FAST_FAIL_MS`, `COOLDOWN_MS`, `ATTEMPT_TIMEOUT_MS`, `RESPONSE_TIMEOUT_MS`, `PREF_TTL_MS`, `VERIFY_TLS=0`, `RETRY_NON_IDEMPOTENT_AFTER_SEND=1`, `RETRY_NON_IDEMPOTENT_WITH_IDEMPOTENCY_KEY=1`).
 
 A systemd user-service template lives in `contrib/`.
 
@@ -153,7 +156,7 @@ Claude Code is a native binary, so the DSH trick of routing the host's `fetch` i
 claude-dual-proxy --listen-port 7896 --gateway 127.0.0.1:12334 -- --resume
 ```
 
-The launcher resolves candidate gateways exactly like the standalone process, sets `HTTP_PROXY`/`HTTPS_PROXY` (both cases) and `ALL_PROXY` for the child, replaces a socks `ALL_PROXY` inherited from the launch environment, adds loopback addresses to `NO_PROXY`, and closes the proxy when `claude` exits. `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, and other child variables are left untouched.
+The launcher resolves candidate gateways exactly like the standalone process, listens on 7896 by default, steps forward up to 10 ports on `EADDRINUSE` and gives the child the actual port, sets `HTTP_PROXY`/`HTTPS_PROXY` (both cases) and `ALL_PROXY`, replaces a socks `ALL_PROXY` inherited from the launch environment, adds loopback addresses to `NO_PROXY`, and closes the proxy when `claude` exits. `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, and other child variables are left untouched.
 
 Host adapters and core: the package entry (`src/index.js`) is still the DSH plugin, implemented in `src/adapters/dsh.js`; host-neutral core is exported as `dsh-dual-proxy/core` (`createDispatcher`, `resolveUpstream`, `collectGateways`, ...) so other hosts can depend on that layer alone.
 
@@ -165,7 +168,12 @@ npm test
 
 The suite runs from the repository or the source archive; run `npm install` once in the source directory before `npm test`. The npm package does not include `test/`, so it cannot be run from an installed package.
 
-The suite covers: HTTP direct fallback, forwarding through a fake proxy, skipping a dead gateway among several, 502 when every path fails, timeout-based failover from a black-hole gateway, hop-by-hop header filtering in both directions, upstream disconnects mid-response without crashing, CONNECT direct tunnels and fake-proxy tunnels, early data arriving with the CONNECT 200, IPv6 literals, fast-fail when a cached gateway stalls, cooldown after a failure, forced tunnel teardown on shutdown, gateway parsing/deduplication (including self-exclusion and self-loop protection), health-check selection and failure, the health loop remembering the favourite, failure kicking a health check, the health-check reentrancy lock, the preference-cache cap, CLI validation and exit codes, plugin lifecycle (start/restart/two contexts), self-signed TLS probing, the non-idempotent replay policy (send boundary, method classes, switch, logs and cooldown), upstream proxy authentication (CONNECT/HTTP/health, 407), the idempotency-key replay switch (presence checks and logs), and `fetch` route installation/replacement/rollback with loopback bypass.
+The suite covers: HTTP direct fallback, forwarding through a fake proxy, skipping a dead gateway among several, 502 when every path fails, timeout-based failover from a black-hole gateway, hop-by-hop header filtering in both directions, upstream disconnects mid-response without crashing, CONNECT direct tunnels and fake-proxy tunnels, early data arriving with the CONNECT 200, IPv6 literals, fast-fail when a cached gateway stalls, cooldown after a failure, forced tunnel teardown on shutdown, gateway parsing/deduplication (including self-exclusion and self-loop protection), health-check selection and failure, the health loop remembering the favourite, failure kicking a health check, the health-check reentrancy lock, the preference-cache cap, CLI validation and exit codes, port fallback and EADDRINUSE diagnostics, socks-warning deduplication, `--print-config`, plugin lifecycle (start/restart/two contexts), self-signed TLS probing, the non-idempotent replay policy (send boundary, method classes, switch, logs and cooldown), upstream proxy authentication (CONNECT/HTTP/health, 407), the idempotency-key replay switch (presence checks and logs), and `fetch` route installation/replacement/rollback with loopback bypass.
+
+## Troubleshooting
+
+- **Nothing is listening, yet listen reports EADDRINUSE**: check `ss -tan | grep :7898`. Short-lived connections created by another process leave TIME-WAIT sockets; if they were created without `SO_REUSEADDR`, a later binder cannot reuse the port even with Node's `reuseAddress`. Use another port or `--port-fallback`; the log prints the actual port. The DSH plugin defaults to `0` to keep the known 7898 entry point; the CLI and `claude-dual-proxy` can opt in.
+- **`socks ... skipped` at startup**: upstreams are HTTP-only; a `socks://` `ALL_PROXY` is skipped by design.
 
 ## Boundaries
 

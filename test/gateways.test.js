@@ -170,3 +170,20 @@ test('resolveUpstream：非法 host/port 抛脱敏错误', () => {
     return true;
   });
 });
+
+test('collectGateways：socks 环境变量给自解释 warning，大小写重复只报一次', () => {
+  const warnings = [];
+  const list = collectGateways({
+    upstream: { host: '127.0.0.1', port: 7897 },
+    env: {
+      ALL_PROXY: 'socks://alice:secret@127.0.0.1:12334/',
+      all_proxy: 'socks://alice:secret@127.0.0.1:12334/'
+    },
+    onInvalid: (subject, reason) => warnings.push([subject, reason])
+  });
+  assert.deepEqual(list.map((g) => g.host + ':' + g.port), ['127.0.0.1:7897']);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0][1], /socks upstream is not supported/);
+  assert.ok(!warnings[0][0].includes('alice'));
+  assert.ok(!warnings[0][0].includes('secret'));
+});

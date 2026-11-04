@@ -12,12 +12,15 @@ test('I20：重放/认证配置面在 Config/plainConfig/patch/两份 README/CLI
   assert.match(index, /retryNonIdempotentAfterSend: fieldValue\(config, 'retryNonIdempotentAfterSend', false\)/);
   assert.match(index, /upstreamUrl: live\(Schema\.string\(\)\.default\(''\)\)/);
   assert.match(index, /upstreamUrl: fieldValue\(config, 'upstreamUrl', ''\)/);
+  assert.match(index, /portFallback: live\(Schema\.number\(\)\.min\(0\)\.max\(100\)\.step\(1\)\.default\(0\)\)/);
+  assert.match(index, /portFallback: fieldValue\(config, 'portFallback', 0\)/);
   assert.match(index, /retryNonIdempotentWithIdempotencyKey: live\(Schema\.boolean\(\)\.default\(false\)\)/);
   assert.match(index, /retryNonIdempotentWithIdempotencyKey: fieldValue\(config, 'retryNonIdempotentWithIdempotencyKey', false\)/);
 
   const patch = read('../cordis.patch.yml');
   assert.match(patch, /retryNonIdempotentAfterSend: false/);
   assert.match(patch, /upstreamUrl: ''/);
+  assert.match(patch, /portFallback: 0/);
   assert.match(patch, /retryNonIdempotentWithIdempotencyKey: false/);
 
   const readme = read('../README.md');
@@ -29,6 +32,9 @@ test('I20：重放/认证配置面在 Config/plainConfig/patch/两份 README/CLI
     assert.match(doc, /upstreamUrl/);
     assert.match(doc, /--upstream-url/);
     assert.match(doc, /UPSTREAM_URL/);
+    assert.match(doc, /portFallback/);
+    assert.match(doc, /--port-fallback/);
+    assert.match(doc, /PORT_FALLBACK/);
     assert.match(doc, /retryNonIdempotentWithIdempotencyKey/);
     assert.match(doc, /--retry-non-idempotent-with-idempotency-key/);
     assert.match(doc, /RETRY_NON_IDEMPOTENT_WITH_IDEMPOTENCY_KEY=1/);
@@ -43,6 +49,8 @@ test('I20：重放/认证配置面在 Config/plainConfig/patch/两份 README/CLI
   assert.match(bin, /RETRY_NON_IDEMPOTENT_AFTER_SEND/);
   assert.match(bin, /--upstream-url/);
   assert.match(bin, /UPSTREAM_URL/);
+  assert.match(bin, /--port-fallback/);
+  assert.match(bin, /PORT_FALLBACK/);
   assert.match(bin, /--retry-non-idempotent-with-idempotency-key/);
   assert.match(bin, /RETRY_NON_IDEMPOTENT_WITH_IDEMPOTENCY_KEY/);
 });

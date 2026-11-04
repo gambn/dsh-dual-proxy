@@ -7,6 +7,8 @@
       config:
         listenHost: '127.0.0.1'
         listenPort: 7898
+        # EADDRINUSE 时按端口 +1 重试的个数；默认 0 保持固定入口
+        portFallback: 0
         upstreamHost: '127.0.0.1'
         upstreamPort: 7897
         # 第一个候选的完整 URL（可含 user:pass）；非空时覆盖 upstreamHost/upstreamPort

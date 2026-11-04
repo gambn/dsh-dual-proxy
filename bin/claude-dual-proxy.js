@@ -66,6 +66,7 @@ async function main() {
     assertNode();
     const { proxyArgs, claudeArgs } = splitArgs(process.argv.slice(2));
     const env = { ...process.env, LISTEN_PORT: process.env.LISTEN_PORT ?? String(DEFAULT_LISTEN_PORT) };
+    if (env.PORT_FALLBACK === undefined || env.PORT_FALLBACK === '') env.PORT_FALLBACK = '10';
     const opts = parseArgs(proxyArgs, env);
     if (opts.help) { usage(); return; }
     if (opts.version) { process.stdout.write(pkg.version + '\n'); return; }
