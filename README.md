@@ -52,7 +52,8 @@ dsh plugin --profile web add "$PWD"
 ## 行为
 
 - 候选网关 = `upstreamHost:upstreamPort`（或 `upstreamUrl`）+ `gateways` + 启动环境的 `HTTP(S)_PROXY`/`ALL_PROXY`，去重并排除自身监听端口，最后补 `direct`。
-- **上游代理认证**：`upstreamUrl`、`gateways` 或环境变量里的 HTTP 代理 URL 可带 `user:pass`；连接代理时会带 `Proxy-Authorization: Basic`。0.7.0 只支持 `http://` 上游代理：`upstreamUrl` 传 `https://` 会报错；额外候选（`gateways`、`--gateway`、`GATEWAY`、启动环境代理）里的 `https://` 或非法值会给脱敏 warning 后跳过。Basic 只是 base64，不是加密，只建议回环或受信任网络。
+- **目的地分流规则（0.7.3，人工名单）**：`preferDirect` / `--prefer-direct`（或 `PREFER_DIRECT`）和 `preferProxy` / `--prefer-proxy`（或 `PREFER_PROXY`）按目标 host 指定先直连或先走代理，逗号分隔，支持 `*` 通配；只匹配归一化后的 host（小写、去方括号/尾点；IDN 按 punycode），不接受正则、CIDR、端口或 URL 路径。优先级：规则 > per-host 缓存 > 全局健康首选 > 默认候选顺序；两名单同时命中时直连优先；规则只在 hot 区调整顺序，冷却中的网关不会被拉回；未命中规则的 host 候选顺序维持原行为（冷却语义见下方两档冷却）。`*.cn` 不匹配 `cn` 本身，也不匹配 `deepseek.cn`，要覆盖 apex 需显式写 `deepseek.cn`。这是人工策略，不是自动国内/海外分类。
+- **上游代理认证**：`upstreamUrl`、`gateways` 或环境变量里的 HTTP 代理 URL 可带 `user:pass`；连接代理时会带 `Proxy-Authorization: Basic`。当前只支持 `http://` 上游代理：`upstreamUrl` 传 `https://` 会报错；额外候选（`gateways`、`--gateway`、`GATEWAY`、启动环境代理）里的 `https://` 或非法值会给脱敏 warning 后跳过。Basic 只是 base64，不是加密，只建议回环或受信任网络。
 - **CONNECT（HTTPS）**：443 上先对候选做 TLS 握手探测，通过的才用来开隧道；失败换下一条。
 - **普通 HTTP**：请求体先缓冲（上限 8 MB），按同一顺序换路重放；建连用 `attemptTimeoutMs`（已知路径用 `fastFailTimeoutMs`），等响应头用 `responseTimeoutMs`，响应体开始流之后不再计时。
 - **幂等键重放**：打开 `retryNonIdempotentWithIdempotencyKey` 后，非幂等请求只有在带非空 `Idempotency-Key`/`X-Idempotency-Key` 时才允许发送后重放；代理不验证上游是否真的去重。
@@ -93,6 +94,8 @@ dsh plugin --profile web add /path/to/dsh-dual-proxy
 | `upstreamPort` | `7897` | 第一个候选网关的端口 |
 | `upstreamUrl` | 空 | 第一个候选的完整 URL，可含 `user:pass`；非空时覆盖 `upstreamHost`/`upstreamPort`，非法值直接报错 |
 | `gateways` | 空 | 额外候选网关，`host:port` 逗号分隔 |
+| `preferDirect` | 空 | 这些 host 先试直连，逗号分隔，支持 `*` 通配 |
+| `preferProxy` | 空 | 这些 host 先试代理，逗号分隔，支持 `*` 通配 |
 | `routeHostFetch` | `false` | 把宿主进程的 `fetch` 引到本代理（bundle patch 里默认打开） |
 | `healthUrl` | `https://api.deepseek.com` | 通道验证地址；空则关闭后台验证（443 仍做 TLS 探测，普通 HTTP 只按顺序试） |
 | `healthIntervalMs` | `60000` | 健康检查间隔；`0` 关闭 |
@@ -132,6 +135,8 @@ node bin/dsh-dual-proxy.js --listen-port 7898 --upstream-port 7897 \
 | `--upstream-port` | `7897` | 第一个候选网关的端口 |
 | `--upstream-url` | — | 第一个候选的完整 URL，可含 `user:pass`；非空时覆盖 host/port |
 | `--gateway` | — | 额外候选网关，可重复 |
+| `--prefer-direct` | 空 | 这些 host 先试直连，逗号分隔，支持 `*` 通配 |
+| `--prefer-proxy` | 空 | 这些 host 先试代理，逗号分隔，支持 `*` 通配 |
 | `--health-url` | 空 | 通道验证地址 |
 | `--health-interval-ms` | `60000` | 健康检查间隔，`0` 关闭 |
 | `--fast-fail-ms` | `2000` | 已知路径的建连超时 |
@@ -143,7 +148,7 @@ node bin/dsh-dual-proxy.js --listen-port 7898 --upstream-port 7897 \
 | `--retry-non-idempotent-after-send` | 关 | 连接建立后失败时也重放 `POST`/`PATCH` |
 | `--retry-non-idempotent-with-idempotency-key` | 关 | 带 `Idempotency-Key` 时允许发送后重放 |
 
-环境变量同名（`LISTEN_HOST`、`LISTEN_PORT`、`PORT_FALLBACK`、`UPSTREAM_HOST`、`UPSTREAM_PORT`、`UPSTREAM_URL`、`GATEWAY`、`HEALTH_URL`、`HEALTH_INTERVAL_MS`、`FAST_FAIL_MS`、`COOLDOWN_MS`、`ATTEMPT_TIMEOUT_MS`、`RESPONSE_TIMEOUT_MS`、`PREF_TTL_MS`、`VERIFY_TLS=0`、`RETRY_NON_IDEMPOTENT_AFTER_SEND=1`、`RETRY_NON_IDEMPOTENT_WITH_IDEMPOTENCY_KEY=1`）。
+环境变量同名（`LISTEN_HOST`、`LISTEN_PORT`、`PORT_FALLBACK`、`UPSTREAM_HOST`、`UPSTREAM_PORT`、`UPSTREAM_URL`、`GATEWAY`、`PREFER_DIRECT`、`PREFER_PROXY`、`HEALTH_URL`、`HEALTH_INTERVAL_MS`、`FAST_FAIL_MS`、`COOLDOWN_MS`、`ATTEMPT_TIMEOUT_MS`、`RESPONSE_TIMEOUT_MS`、`PREF_TTL_MS`、`VERIFY_TLS=0`、`RETRY_NON_IDEMPOTENT_AFTER_SEND=1`、`RETRY_NON_IDEMPOTENT_WITH_IDEMPOTENCY_KEY=1`）。
 
 systemd 用户服务模板在 `contrib/`。
 
@@ -168,17 +173,21 @@ npm test
 
 测试面向仓库或源码快照；首次先在源码目录 `npm install`，再 `npm test`。npm 包不含 `test/`，安装后不能直接跑这套用例。
 
-用例覆盖：HTTP 直连回退、经假代理转发、多个网关时跳过不通的、两条都不通返回 502、黑洞网关按超时换路、请求与响应两个方向的逐跳标头过滤、上游中途断开不带崩进程、CONNECT 直连隧道与经假代理隧道、CONNECT 200 同包早期数据、IPv6 字面量、缓存网关卡住时快失败换路、失败网关冷却后不再先撞、关闭时强制断开在途隧道、网关解析与去重（含自身端口排除与自环防护）、健康检查的选择与失败、健康循环记住首选、失败踢一次健康检查、健康检查重入锁、偏好缓存上限、CLI 参数校验与退出码、端口退避与 EADDRINUSE 诊断、socks 告警去重、`--print-config`、插件生命周期（启动/重启/双 context）、自签证书的 TLS 探测、非幂等重放策略（send 前后边界、方法分类、开关、日志与冷却）、上游代理认证（CONNECT/HTTP/健康检查、407）、带幂等键的发送后重放（开关/键存在性/日志）、以及 `fetch` 路由的安装/替换/回滚与回环绕过。
+用例覆盖：HTTP 直连回退、经假代理转发、多个网关时跳过不通的、两条都不通返回 502、黑洞网关按超时换路、请求与响应两个方向的逐跳标头过滤、上游中途断开不带崩进程、CONNECT 直连隧道与经假代理隧道、CONNECT 200 同包早期数据、IPv6 字面量、缓存网关卡住时快失败换路、失败网关冷却后不再先撞、两档冷却的 host 隔离与 phase 分类、流式 reset 不记冷却、目的地规则（解析/匹配/优先级/健康与缓存覆盖/CLI/env）、关闭时强制断开在途隧道、网关解析与去重（含自身端口排除与自环防护）、健康检查的选择与失败、健康循环记住首选、失败踢一次健康检查、健康检查重入锁、偏好缓存上限、CLI 参数校验与退出码、端口退避与 EADDRINUSE 诊断、socks 告警去重、`--print-config`、插件生命周期（启动/重启/双 context）、自签证书的 TLS 探测、非幂等重放策略（send 前后边界、方法分类、开关、日志与冷却）、上游代理认证（CONNECT/HTTP/健康检查、407）、带幂等键的发送后重放（开关/键存在性/日志）、以及 `fetch` 路由的安装/替换/回滚与回环绕过。
 
 ## 排障
 
 - **端口没有监听者，listen 仍报 EADDRINUSE**：先看 `ss -tan | grep :7898`。同一端口上由别的进程建立过的短连接会留下 TIME-WAIT；如果它建立时没带 `SO_REUSEADDR`，后来者即使带 Node 的 `reuseAddress` 也绑不上。换端口，或用 `--port-fallback` 自动退避；日志会打印实际监听端口。DSH 插件默认 `0`，保持 7898 这个已知入口；CLI 和 `claude-dual-proxy` 可显式开启。
 - **启动日志出现 `socks ... skipped`**：上游只支持 `http://` 代理，`ALL_PROXY=socks://...` 会被跳过，这是预期行为。
 
+## 0.7.3 行为变更
+
+新增人工目的地规则；冷却从单一网关级改为两档。没有规则时请求的候选顺序与 0.7.2 一致，但 direct/TLS/等头/reset 的冷却不再跨 host 污染，代理自身失败仍全局冷却。
+
 ## 边界
 
 - 只处理 HTTP/1.1 的 `CONNECT` 与普通 HTTP；不做透明代理、不接管 UDP。
-- 普通 HTTP 请求在网关连上后要等满 `responseTimeoutMs`（默认 60 秒）才判定响应头超时；0.7.0 不缩短这个等待，幂等键只改变超时后的重放决策。
+- 普通 HTTP 请求在网关连上后要等满 `responseTimeoutMs`（默认 60 秒）才判定响应头超时；0.7.3 不缩短这个等待，幂等键只改变超时后的重放决策。
 - CONNECT 隧道建立后代理只转发字节，TLS 端到端；隧道内失败无法换路，要覆盖只能做 MITM 解密，和本项目“不拦截”的定位冲突。
 - 不校验证书，不缓存内容，不做鉴权。默认只绑回环；把 `listenHost` 改成非回环地址会在启动时告警——那等于开放一个无鉴权代理，风险自负。
 - 上游代理认证只支持 `http://` 的 Basic；不支持 `https://` 上游代理（TLS-to-proxy）。Basic 只适合回环或受信任网络，远程代理的凭证保护不在本项目范围内。

@@ -15,6 +15,9 @@
         upstreamUrl: ''
         # 额外候选网关（host:port，逗号分隔）；启动环境里的 HTTP(S)_PROXY 也会自动加入
         gateways: ''
+        # 人工目的地规则：逗号分隔，支持 * 通配；空表示不启用
+        preferDirect: ''
+        preferProxy: ''
         # 把宿主进程的 fetch（模型请求）引到本代理上
         routeHostFetch: true
         # 用真实请求验证“到模型端点”的通道；401/403 也算通

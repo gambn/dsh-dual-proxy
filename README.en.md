@@ -52,7 +52,8 @@ The health check runs the same candidate list with a real request; the first one
 ## Behaviour
 
 - Candidate gateways = `upstreamHost:upstreamPort` (or `upstreamUrl`) + `gateways` + `HTTP(S)_PROXY`/`ALL_PROXY` from the launch environment, deduplicated, excluding the proxy's own listen port, with `direct` appended last.
-- **Upstream proxy authentication**: `upstreamUrl`, `gateways`, or a proxy URL in the launch environment may carry `user:pass`; proxy connections then send `Proxy-Authorization: Basic`. 0.7.0 supports only `http://` upstream proxies: `upstreamUrl` with `https://` is an error; extra candidates (`gateways`, `--gateway`, `GATEWAY`, launch-environment proxies) with `https://` or invalid values are skipped with a redacted warning. Basic is base64, not encryption; use it only on loopback or trusted networks.
+- **Destination policy (0.7.3, manual lists)**: `preferDirect` / `--prefer-direct` (or `PREFER_DIRECT`) and `preferProxy` / `--prefer-proxy` (or `PREFER_PROXY`) choose direct-first or proxy-first per target host, comma-separated, with `*` globs. Only normalized hosts (lowercase, brackets/trailing dot removed; IDN as punycode) are matched; no regex, CIDR, port, or URL path. Priority: rules > per-host cache > global health preference > default order; direct wins when both lists match; rules only reorder the hot set and never revive a cooling gateway; unmatched hosts keep the original candidate order (cooling semantics below). `*.cn` does not match `cn` itself or `deepseek.cn`; include the apex explicitly. This is a manual policy, not automatic domestic/overseas classification.
+- **Upstream proxy authentication**: `upstreamUrl`, `gateways`, or a proxy URL in the launch environment may carry `user:pass`; proxy connections then send `Proxy-Authorization: Basic`. This version supports only `http://` upstream proxies: `upstreamUrl` with `https://` is an error; extra candidates (`gateways`, `--gateway`, `GATEWAY`, launch-environment proxies) with `https://` or invalid values are skipped with a redacted warning. Basic is base64, not encryption; use it only on loopback or trusted networks.
 - **CONNECT (HTTPS)**: on 443, each candidate gets a TLS handshake probe; only a candidate that passes is used to open the tunnel. On failure, the next one is tried.
 - **Plain HTTP**: the request body is buffered first (8 MB limit), and the request is replayed along the same candidate order. Connect uses `attemptTimeoutMs` (`fastFailTimeoutMs` for a known path), waiting for response headers uses `responseTimeoutMs`; the timer stops once the response body starts streaming.
 - **Idempotency-key replay**: with `retryNonIdempotentWithIdempotencyKey` on, a non-idempotent request is replayed after send only when it carries a non-empty `Idempotency-Key`/`X-Idempotency-Key`; the proxy does not verify that the upstream actually deduplicates.
@@ -93,6 +94,8 @@ Confirm that `~/.dsh/profiles/web/package.json` lists `dsh-dual-proxy` under `ds
 | `upstreamPort` | `7897` | Port of the first candidate |
 | `upstreamUrl` | empty | Full URL of the first candidate, may include `user:pass`; overrides `upstreamHost`/`upstreamPort` when set; an invalid value is a hard error |
 | `gateways` | empty | Extra candidates, comma-separated `host:port` |
+| `preferDirect` | empty | Try direct first for these hosts, comma-separated, `*` glob |
+| `preferProxy` | empty | Try proxies first for these hosts, comma-separated, `*` glob |
 | `routeHostFetch` | `false` | Route the host's `fetch` through this proxy (enabled by the bundle patch) |
 | `healthUrl` | `https://api.deepseek.com` | Channel check URL; empty disables background checks (443 still gets the TLS probe; plain HTTP just tries in order) |
 | `healthIntervalMs` | `60000` | Health-check interval; `0` disables |
@@ -132,6 +135,8 @@ node bin/dsh-dual-proxy.js --listen-port 7898 --upstream-port 7897 \
 | `--upstream-port` | `7897` | Port of the first candidate |
 | `--upstream-url` | — | Full URL of the first candidate, may include `user:pass`; overrides host/port |
 | `--gateway` | — | Extra candidate, repeatable |
+| `--prefer-direct` | empty | Try direct first for these hosts, comma-separated, `*` glob |
+| `--prefer-proxy` | empty | Try proxies first for these hosts, comma-separated, `*` glob |
 | `--health-url` | empty | Channel check URL |
 | `--health-interval-ms` | `60000` | Health-check interval, `0` disables |
 | `--fast-fail-ms` | `2000` | Connect timeout for a known path |
@@ -143,7 +148,7 @@ node bin/dsh-dual-proxy.js --listen-port 7898 --upstream-port 7897 \
 | `--retry-non-idempotent-after-send` | off | Also replay `POST`/`PATCH` after the connection was established |
 | `--retry-non-idempotent-with-idempotency-key` | off | Allow post-send replay when `Idempotency-Key` is present |
 
-Environment variables use the same names (`LISTEN_HOST`, `LISTEN_PORT`, `PORT_FALLBACK`, `UPSTREAM_HOST`, `UPSTREAM_PORT`, `UPSTREAM_URL`, `GATEWAY`, `HEALTH_URL`, `HEALTH_INTERVAL_MS`, `FAST_FAIL_MS`, `COOLDOWN_MS`, `ATTEMPT_TIMEOUT_MS`, `RESPONSE_TIMEOUT_MS`, `PREF_TTL_MS`, `VERIFY_TLS=0`, `RETRY_NON_IDEMPOTENT_AFTER_SEND=1`, `RETRY_NON_IDEMPOTENT_WITH_IDEMPOTENCY_KEY=1`).
+Environment variables use the same names (`LISTEN_HOST`, `LISTEN_PORT`, `PORT_FALLBACK`, `UPSTREAM_HOST`, `UPSTREAM_PORT`, `UPSTREAM_URL`, `GATEWAY`, `PREFER_DIRECT`, `PREFER_PROXY`, `HEALTH_URL`, `HEALTH_INTERVAL_MS`, `FAST_FAIL_MS`, `COOLDOWN_MS`, `ATTEMPT_TIMEOUT_MS`, `RESPONSE_TIMEOUT_MS`, `PREF_TTL_MS`, `VERIFY_TLS=0`, `RETRY_NON_IDEMPOTENT_AFTER_SEND=1`, `RETRY_NON_IDEMPOTENT_WITH_IDEMPOTENCY_KEY=1`).
 
 A systemd user-service template lives in `contrib/`.
 
@@ -168,17 +173,21 @@ npm test
 
 The suite runs from the repository or the source archive; run `npm install` once in the source directory before `npm test`. The npm package does not include `test/`, so it cannot be run from an installed package.
 
-The suite covers: HTTP direct fallback, forwarding through a fake proxy, skipping a dead gateway among several, 502 when every path fails, timeout-based failover from a black-hole gateway, hop-by-hop header filtering in both directions, upstream disconnects mid-response without crashing, CONNECT direct tunnels and fake-proxy tunnels, early data arriving with the CONNECT 200, IPv6 literals, fast-fail when a cached gateway stalls, cooldown after a failure, forced tunnel teardown on shutdown, gateway parsing/deduplication (including self-exclusion and self-loop protection), health-check selection and failure, the health loop remembering the favourite, failure kicking a health check, the health-check reentrancy lock, the preference-cache cap, CLI validation and exit codes, port fallback and EADDRINUSE diagnostics, socks-warning deduplication, `--print-config`, plugin lifecycle (start/restart/two contexts), self-signed TLS probing, the non-idempotent replay policy (send boundary, method classes, switch, logs and cooldown), upstream proxy authentication (CONNECT/HTTP/health, 407), the idempotency-key replay switch (presence checks and logs), and `fetch` route installation/replacement/rollback with loopback bypass.
+The suite covers: HTTP direct fallback, forwarding through a fake proxy, skipping a dead gateway among several, 502 when every path fails, timeout-based failover from a black-hole gateway, hop-by-hop header filtering in both directions, upstream disconnects mid-response without crashing, CONNECT direct tunnels and fake-proxy tunnels, early data arriving with the CONNECT 200, IPv6 literals, fast-fail when a cached gateway stalls, cooldown after a failure, two-tier cooling with host isolation and phase classification, stream resets not cooling, destination policy (parsing/matching/precedence/health-and-cache override/CLI/env), forced tunnel teardown on shutdown, gateway parsing/deduplication (including self-exclusion and self-loop protection), health-check selection and failure, the health loop remembering the favourite, failure kicking a health check, the health-check reentrancy lock, the preference-cache cap, CLI validation and exit codes, port fallback and EADDRINUSE diagnostics, socks-warning deduplication, `--print-config`, plugin lifecycle (start/restart/two contexts), self-signed TLS probing, the non-idempotent replay policy (send boundary, method classes, switch, logs and cooldown), upstream proxy authentication (CONNECT/HTTP/health, 407), the idempotency-key replay switch (presence checks and logs), and `fetch` route installation/replacement/rollback with loopback bypass.
 
 ## Troubleshooting
 
 - **Nothing is listening, yet listen reports EADDRINUSE**: check `ss -tan | grep :7898`. Short-lived connections created by another process leave TIME-WAIT sockets; if they were created without `SO_REUSEADDR`, a later binder cannot reuse the port even with Node's `reuseAddress`. Use another port or `--port-fallback`; the log prints the actual port. The DSH plugin defaults to `0` to keep the known 7898 entry point; the CLI and `claude-dual-proxy` can opt in.
 - **`socks ... skipped` at startup**: upstreams are HTTP-only; a `socks://` `ALL_PROXY` is skipped by design.
 
+## 0.7.3 behavior change
+
+Adds manual destination policy and changes cooling from a single gateway-level map to two tiers. With no rules the candidate order matches 0.7.2, but direct/TLS/header/reset cooling no longer crosses hosts; proxy-side failures remain global.
+
 ## Boundaries
 
 - Only HTTP/1.1 `CONNECT` and plain HTTP; no transparent proxying and no UDP.
-- A plain HTTP request waits up to `responseTimeoutMs` (60 seconds by default) for response headers after the gateway connection is established; 0.7.0 does not shorten that wait, and the idempotency key only changes the replay decision after the timeout.
+- A plain HTTP request waits up to `responseTimeoutMs` (60 seconds by default) for response headers after the gateway connection is established; 0.7.3 does not shorten that wait, and the idempotency key only changes the replay decision after the timeout.
 - Once a CONNECT tunnel is established the proxy only forwards bytes and TLS is end-to-end; an in-tunnel failure cannot be failed over. Covering it would require MITM decryption, which conflicts with this project's no-interception design.
 - Certificates are not verified, contents are not cached, and there is no authentication. It binds to loopback by default; changing `listenHost` to a non-loopback address logs a warning at startup — that turns it into an unauthenticated proxy, at your own risk.
 - Upstream proxy authentication is HTTP Basic only; `https://` upstream proxies (TLS-to-proxy) are not supported. Basic is suitable only on loopback or trusted networks; protecting credentials to a remote proxy is outside this project's scope.

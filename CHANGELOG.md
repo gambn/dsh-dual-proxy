@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.7.3
+
+### Added
+
+- 人工目的地分流规则：`preferDirect` / `--prefer-direct`（`PREFER_DIRECT`）与 `preferProxy` / `--prefer-proxy`（`PREFER_PROXY`），按目标 host 指定先直连或先走代理；逗号分隔，支持 `*` 通配。DSH 插件、独立 CLI 和 `claude-dual-proxy` 三个入口贯通，`--print-config` 输出规则。
+- 规则优先级：规则 > per-host 缓存 > 全局健康首选 > 默认顺序；两名单同时命中时直连优先；未命中规则的 host 候选顺序不变。
+
+### Changed
+
+- 冷却从单一网关级改为两档：代理自身 TCP/DNS/建连失败、407、代理沉默/响应头前 reset 全局冷却；direct 建连失败、经代理 CONNECT 到目标失败、TLS 失败、direct 等头超时、direct 响应头前 reset 按 `host + gateway` 冷却；收到响应头后的流式中断不记冷却。
+- fast-fail 只对真正的缓存/健康首选生效；规则命中不制造“已知路径”，`preferDirect` 首条仍用完整 `attemptTimeoutMs`。
+- 健康检查仍是单 URL 全局信号，规则命中的 host 不受它影响；只作为未命中规则 host 的兜底。
+- `src/paths.js` 增加 phase 分类，CONNECT 路径区分代理建连失败与目标 CONNECT 失败。
+
+### Notes
+
+- Node 门槛仍为 `>=22.19.0`，`undici` 仍为 8.12.3；DSH 的 `routeHostFetch` 依赖它的全局 dispatcher。
+- 总用例 158；`rules.js` 行/分支 100%；项目级行覆盖 94.40%。
+
 ## 0.7.2
 
 ### Added

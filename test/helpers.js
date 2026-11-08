@@ -36,6 +36,7 @@ export async function startTarget() {
 /** 假上游代理：普通 HTTP 转发并加 x-via，CONNECT 建隧道 */
 export async function startFakeProxy(tag = 'proxy') {
   let count = 0;
+  let connectCount = 0;
   const server = http.createServer((req, res) => {
     count += 1;
     let url;
@@ -55,6 +56,7 @@ export async function startFakeProxy(tag = 'proxy') {
   });
 
   server.on('connect', (req, socket, head) => {
+    connectCount += 1;
     const [host, port] = String(req.url).split(':');
     const target = net.connect(Number(port), host, () => {
       socket.write('HTTP/1.1 200 OK\r\n\r\n');
@@ -67,7 +69,7 @@ export async function startFakeProxy(tag = 'proxy') {
   });
 
   const port = await listen(server);
-  return { port, count: () => count, close: () => close(server) };
+  return { port, count: () => count, connectCount: () => connectCount, close: () => close(server) };
 }
 
 /** 需要 Basic 认证的假上游代理：普通 HTTP 与 CONNECT 都校验 Proxy-Authorization */
@@ -131,6 +133,48 @@ export async function startAuthProxy({ user = 'alice', password = 'secret', tag 
 /** 同 startFakeProxy，命名更明确；带 count() */
 export async function startCountingProxy(tag = 'proxy') {
   return startFakeProxy(tag);
+}
+
+/** 固定 200 的假代理：不转发，用于验证“规则目标冷却后不会把死路拉回”。 */
+export async function startStaticProxy(tag = 'static') {
+  let count = 0;
+  const server = http.createServer((req, res) => {
+    count += 1;
+    req.resume();
+    res.writeHead(200, { 'content-type': 'text/plain', 'x-via': tag });
+    res.end('static');
+  });
+  const port = await listen(server);
+  return { port, count: () => count, close: () => close(server) };
+}
+
+/** 对 CONNECT 直接回指定状态码的假代理；用于验证 target-connect 阶段。 */
+export async function startRejectConnectProxy(status = 502) {
+  let count = 0;
+  const server = http.createServer((req, res) => {
+    req.resume();
+    res.writeHead(502);
+    res.end('plain http not supported in this fixture');
+  });
+  server.on('connect', (req, socket) => {
+    count += 1;
+    socket.end('HTTP/1.1 ' + status + ' Rejected\r\nContent-Length: 0\r\n\r\n');
+  });
+  const port = await listen(server);
+  return { port, count: () => count, close: () => close(server) };
+}
+
+/** 接受 TCP 后稍等再 RST，制造“连接已建立、随后失败” */
+export async function startResetProxy() {
+  const server = net.createServer((sock) => {
+    sock.on('error', () => {});
+    setTimeout(() => {
+      if (typeof sock.resetAndDestroy === 'function') sock.resetAndDestroy();
+      else sock.destroy();
+    }, 10);
+  });
+  const port = await listen(server);
+  return { port, close: () => close(server) };
 }
 
 /** 拿一个“确定没人听”的端口 */
@@ -271,16 +315,6 @@ export async function startHopTarget() {
       });
       res.end('ok');
     });
-  });
-  const port = await listen(server);
-  return { port, close: () => close(server) };
-}
-
-/** 接受 TCP 后立刻断开，制造“连接已建立、随后失败” */
-export async function startResetProxy() {
-  const server = net.createServer((sock) => {
-    sock.on('error', () => {});
-    sock.destroy();
   });
   const port = await listen(server);
   return { port, close: () => close(server) };

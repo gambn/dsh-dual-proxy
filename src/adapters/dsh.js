@@ -1,5 +1,6 @@
 import Schema from '@deepseek-ai/schemastery';
 import { createDispatcher } from '../server.js';
+import { splitPatterns } from '../rules.js';
 import { collectGateways, isLoopbackHost, resolveUpstream } from '../gateways.js';
 import { installFetchRoute, uninstallFetchRoute } from '../fetch-route.js';
 import { createRestarter } from '../restart.js';
@@ -31,6 +32,8 @@ export const Config = Schema.object({
   upstreamPort: live(Schema.number().min(1).max(65535).step(1).default(7897)),
   upstreamUrl: live(Schema.string().default('')),
   gateways: live(Schema.string().default('')),
+  preferDirect: live(Schema.string().default('')),
+  preferProxy: live(Schema.string().default('')),
   routeHostFetch: live(Schema.boolean().default(false)),
   healthUrl: live(Schema.string().default('https://api.deepseek.com')),
   healthIntervalMs: live(Schema.number().min(0).max(3600000).step(1000).default(60000)),
@@ -69,6 +72,8 @@ function plainConfig(config) {
     upstreamPort: fieldValue(config, 'upstreamPort', 7897),
     upstreamUrl: fieldValue(config, 'upstreamUrl', ''),
     gateways: fieldValue(config, 'gateways', ''),
+    preferDirect: fieldValue(config, 'preferDirect', ''),
+    preferProxy: fieldValue(config, 'preferProxy', ''),
     routeHostFetch: fieldValue(config, 'routeHostFetch', false),
     healthUrl: fieldValue(config, 'healthUrl', 'https://api.deepseek.com'),
     healthIntervalMs: fieldValue(config, 'healthIntervalMs', 60000),
@@ -124,6 +129,8 @@ export async function apply(ctx, config) {
       if (disposed) return;
 
       const { gateways: gatewayText, routeHostFetch, upstreamUrl, ...dispatcherConfig } = base;
+      dispatcherConfig.preferDirect = splitPatterns(dispatcherConfig.preferDirect);
+      dispatcherConfig.preferProxy = splitPatterns(dispatcherConfig.preferProxy);
       dispatcherConfig.upstreamHost = upstream.host;
       dispatcherConfig.upstreamPort = upstream.port;
       if (upstream.auth) dispatcherConfig.upstreamAuth = upstream.auth;
