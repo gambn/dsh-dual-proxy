@@ -148,6 +148,39 @@ export async function startStaticProxy(tag = 'static') {
   return { port, count: () => count, close: () => close(server) };
 }
 
+export async function startStatusTunnelProxy(status = 200) {
+  const tunnels = new Set();
+  const server = http.createServer((req, res) => {
+    req.resume();
+    res.writeHead(status, { 'content-type': 'text/plain' });
+    res.end('status:' + status);
+  });
+  server.on('connect', (req, socket) => {
+    tunnels.add(socket);
+    socket.on('close', () => tunnels.delete(socket));
+    socket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
+    let buf = '';
+    const onData = (chunk) => {
+      buf += chunk.toString('latin1');
+      if (!buf.includes('\r\n\r\n')) return;
+      socket.removeListener('data', onData);
+      socket.end('HTTP/1.1 ' + status + ' Status\r\nContent-Length: 0\r\nConnection: close\r\n\r\n');
+    };
+    socket.on('data', onData);
+    socket.on('error', () => {});
+  });
+  const port = await listen(server);
+  return {
+    port,
+    close: async () => {
+      for (const tunnel of tunnels) tunnel.destroy();
+      tunnels.clear();
+      server.closeAllConnections?.();
+      await close(server);
+    }
+  };
+}
+
 /** 对 CONNECT 直接回指定状态码的假代理；用于验证 target-connect 阶段。 */
 export async function startRejectConnectProxy(status = 502) {
   let count = 0;

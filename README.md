@@ -53,6 +53,7 @@ dsh plugin --profile web add "$PWD"
 
 - 候选网关 = `upstreamHost:upstreamPort`（或 `upstreamUrl`）+ `gateways` + 启动环境的 `HTTP(S)_PROXY`/`ALL_PROXY`，去重并排除自身监听端口，最后补 `direct`。
 - **目的地分流规则（0.7.3，人工名单）**：`preferDirect` / `--prefer-direct`（或 `PREFER_DIRECT`）和 `preferProxy` / `--prefer-proxy`（或 `PREFER_PROXY`）按目标 host 指定先直连或先走代理，逗号分隔，支持 `*` 通配；只匹配归一化后的 host（小写、去方括号/尾点；IDN 按 punycode），不接受正则、CIDR、端口或 URL 路径。优先级：规则 > per-host 缓存 > 全局健康首选 > 默认候选顺序；两名单同时命中时直连优先；规则只在 hot 区调整顺序，冷却中的网关不会被拉回；未命中规则的 host 候选顺序维持原行为（冷却语义见下方两档冷却）。`*.cn` 不匹配 `cn` 本身，也不匹配 `deepseek.cn`，要覆盖 apex 需显式写 `deepseek.cn`。这是人工策略，不是自动国内/海外分类。
+- **本机代理兜底发现（0.8.0，Linux）**：监听成功后异步扫描、按目标失败扫描、健康全失败扫描三种触发；只读 `/proc/net/tcp`/`tcp6` 的回环/通配 LISTEN 端口，最多 64 个、8 并发、800ms 单次、结果最多 8 条；HTTPS 用 `CONNECT` 2xx 判定，HTTP 用 absolute-form GET `<500 且 !==407` 判定；发现项排在 `direct` 前，TTL 5 分钟，成功使用/健康选中刷新，不覆盖 `preferDirect`/`preferProxy`，不拉回冷却网关，默认跳过 sibling。按目标发现只对 80/443、非回环/私网目标生效；自定义端口或私网端点需要显式 `--gateway`。发现是兜底，不保证本机没有可用代理时仍能连通。
 - **上游代理认证**：`upstreamUrl`、`gateways` 或环境变量里的 HTTP 代理 URL 可带 `user:pass`；连接代理时会带 `Proxy-Authorization: Basic`。当前只支持 `http://` 上游代理：`upstreamUrl` 传 `https://` 会报错；额外候选（`gateways`、`--gateway`、`GATEWAY`、启动环境代理）里的 `https://` 或非法值会给脱敏 warning 后跳过。Basic 只是 base64，不是加密，只建议回环或受信任网络。
 - **CONNECT（HTTPS）**：443 上先对候选做 TLS 握手探测，通过的才用来开隧道；失败换下一条。
 - **普通 HTTP**：请求体先缓冲（上限 8 MB），按同一顺序换路重放；建连用 `attemptTimeoutMs`（已知路径用 `fastFailTimeoutMs`），等响应头用 `responseTimeoutMs`，响应体开始流之后不再计时。
@@ -94,6 +95,7 @@ dsh plugin --profile web add /path/to/dsh-dual-proxy
 | `upstreamPort` | `7897` | 第一个候选网关的端口 |
 | `upstreamUrl` | 空 | 第一个候选的完整 URL，可含 `user:pass`；非空时覆盖 `upstreamHost`/`upstreamPort`，非法值直接报错 |
 | `gateways` | 空 | 额外候选网关，`host:port` 逗号分隔 |
+| `discoverLocalProxy` | `true` | Linux 本机回环代理兜底发现 |
 | `preferDirect` | 空 | 这些 host 先试直连，逗号分隔，支持 `*` 通配 |
 | `preferProxy` | 空 | 这些 host 先试代理，逗号分隔，支持 `*` 通配 |
 | `routeHostFetch` | `false` | 把宿主进程的 `fetch` 引到本代理（bundle patch 里默认打开） |
@@ -135,6 +137,7 @@ node bin/dsh-dual-proxy.js --listen-port 7898 --upstream-port 7897 \
 | `--upstream-port` | `7897` | 第一个候选网关的端口 |
 | `--upstream-url` | — | 第一个候选的完整 URL，可含 `user:pass`；非空时覆盖 host/port |
 | `--gateway` | — | 额外候选网关，可重复 |
+| `--no-discover-local-proxy` | 开 | 关闭本机代理兜底发现 |
 | `--prefer-direct` | 空 | 这些 host 先试直连，逗号分隔，支持 `*` 通配 |
 | `--prefer-proxy` | 空 | 这些 host 先试代理，逗号分隔，支持 `*` 通配 |
 | `--health-url` | 空 | 通道验证地址 |
@@ -148,7 +151,7 @@ node bin/dsh-dual-proxy.js --listen-port 7898 --upstream-port 7897 \
 | `--retry-non-idempotent-after-send` | 关 | 连接建立后失败时也重放 `POST`/`PATCH` |
 | `--retry-non-idempotent-with-idempotency-key` | 关 | 带 `Idempotency-Key` 时允许发送后重放 |
 
-环境变量同名（`LISTEN_HOST`、`LISTEN_PORT`、`PORT_FALLBACK`、`UPSTREAM_HOST`、`UPSTREAM_PORT`、`UPSTREAM_URL`、`GATEWAY`、`PREFER_DIRECT`、`PREFER_PROXY`、`HEALTH_URL`、`HEALTH_INTERVAL_MS`、`FAST_FAIL_MS`、`COOLDOWN_MS`、`ATTEMPT_TIMEOUT_MS`、`RESPONSE_TIMEOUT_MS`、`PREF_TTL_MS`、`VERIFY_TLS=0`、`RETRY_NON_IDEMPOTENT_AFTER_SEND=1`、`RETRY_NON_IDEMPOTENT_WITH_IDEMPOTENCY_KEY=1`）。
+环境变量同名（`LISTEN_HOST`、`LISTEN_PORT`、`PORT_FALLBACK`、`UPSTREAM_HOST`、`UPSTREAM_PORT`、`UPSTREAM_URL`、`GATEWAY`、`PREFER_DIRECT`、`PREFER_PROXY`、`DISCOVER_LOCAL_PROXY=0`、`HEALTH_URL`、`HEALTH_INTERVAL_MS`、`FAST_FAIL_MS`、`COOLDOWN_MS`、`ATTEMPT_TIMEOUT_MS`、`RESPONSE_TIMEOUT_MS`、`PREF_TTL_MS`、`VERIFY_TLS=0`、`RETRY_NON_IDEMPOTENT_AFTER_SEND=1`、`RETRY_NON_IDEMPOTENT_WITH_IDEMPOTENCY_KEY=1`）。
 
 systemd 用户服务模板在 `contrib/`。
 
@@ -184,6 +187,10 @@ npm test
 
 新增人工目的地规则；冷却从单一网关级改为两档。没有规则时请求的候选顺序与 0.7.2 一致，但 direct/TLS/等头/reset 的冷却不再跨 host 污染，代理自身失败仍全局冷却。
 
+## 0.8.0 行为变更
+
+新增本机回环代理兜底发现（Linux）；发现只补候选，不改变已知候选可用时的选路；按目标发现只对 80/443、非私网目标生效；直连 5xx 是目标响应，不触发发现。DSH 插件换端口时先起新监听、切好 fetch 路由再关旧监听；同端口重建失败时恢复上一次可用配置。
+
 ## 边界
 
 - 只处理 HTTP/1.1 的 `CONNECT` 与普通 HTTP；不做透明代理、不接管 UDP。
@@ -193,6 +200,7 @@ npm test
 - 上游代理认证只支持 `http://` 的 Basic；不支持 `https://` 上游代理（TLS-to-proxy）。Basic 只适合回环或受信任网络，远程代理的凭证保护不在本项目范围内。
 - 只负责「到不到得了」，不负责「信不信得过」——证书校验仍是客户端的责任。
 - 健康检查只发一个无凭证 `GET`，判据是「有没有 <500 的响应」，不代表凭证或模型权限有效。
+- **本机代理发现只在 Linux 生效**；非 Linux 行为与 0.7.3 一致。按目标发现只对 80/443、非回环/私网目标触发；自定义端口或私网模型端点需要显式 `--gateway`。发现默认跳过 sibling；如果本机唯一活路是 sibling，发现不会自动使用它。**直连返回 HTTP 5xx 算目标响应，不触发发现**。发现是兜底，不保证本机没有可用代理且 direct 也不通时仍能连通。
 - **不保证「至多一次」**：默认 `retryNonIdempotentAfterSend: false` 时，`POST`/`PATCH` 在连接建立后失败会直接 502（可能已送达、未重放），幂等方法仍会重放；打开该开关会恢复发送后重放，代价是可能重复执行。客户端 SDK 对 5xx 的自动重试不受代理控制，对计费或写入敏感的调用仍应在上游使用幂等键。
 
 ## 反馈

@@ -53,6 +53,7 @@ The health check runs the same candidate list with a real request; the first one
 
 - Candidate gateways = `upstreamHost:upstreamPort` (or `upstreamUrl`) + `gateways` + `HTTP(S)_PROXY`/`ALL_PROXY` from the launch environment, deduplicated, excluding the proxy's own listen port, with `direct` appended last.
 - **Destination policy (0.7.3, manual lists)**: `preferDirect` / `--prefer-direct` (or `PREFER_DIRECT`) and `preferProxy` / `--prefer-proxy` (or `PREFER_PROXY`) choose direct-first or proxy-first per target host, comma-separated, with `*` globs. Only normalized hosts (lowercase, brackets/trailing dot removed; IDN as punycode) are matched; no regex, CIDR, port, or URL path. Priority: rules > per-host cache > global health preference > default order; direct wins when both lists match; rules only reorder the hot set and never revive a cooling gateway; unmatched hosts keep the original candidate order (cooling semantics below). `*.cn` does not match `cn` itself or `deepseek.cn`; include the apex explicitly. This is a manual policy, not automatic domestic/overseas classification.
+- **Local proxy fallback discovery (0.8.0, Linux)**: discovery runs after listen, after all candidates for a target fail, and after all health checks fail; it reads loopback/wildcard LISTEN ports from `/proc/net/tcp`/`tcp6`, up to 64 ports, 8 concurrent, 800ms each, at most 8 results. HTTPS uses `CONNECT` 2xx; HTTP uses absolute-form GET `<500 && !==407`. Discovered entries sit before `direct`, expire after 5 minutes, refresh on success/health selection, never override `preferDirect`/`preferProxy`, never revive cooling gateways, and skip siblings by default. Per-target discovery only runs for 80/443 and non-loopback/private targets; custom ports or private endpoints need explicit `--gateway`. Discovery is a fallback, not a guarantee when no local proxy and direct both fail.
 - **Upstream proxy authentication**: `upstreamUrl`, `gateways`, or a proxy URL in the launch environment may carry `user:pass`; proxy connections then send `Proxy-Authorization: Basic`. This version supports only `http://` upstream proxies: `upstreamUrl` with `https://` is an error; extra candidates (`gateways`, `--gateway`, `GATEWAY`, launch-environment proxies) with `https://` or invalid values are skipped with a redacted warning. Basic is base64, not encryption; use it only on loopback or trusted networks.
 - **CONNECT (HTTPS)**: on 443, each candidate gets a TLS handshake probe; only a candidate that passes is used to open the tunnel. On failure, the next one is tried.
 - **Plain HTTP**: the request body is buffered first (8 MB limit), and the request is replayed along the same candidate order. Connect uses `attemptTimeoutMs` (`fastFailTimeoutMs` for a known path), waiting for response headers uses `responseTimeoutMs`; the timer stops once the response body starts streaming.
@@ -94,6 +95,7 @@ Confirm that `~/.dsh/profiles/web/package.json` lists `dsh-dual-proxy` under `ds
 | `upstreamPort` | `7897` | Port of the first candidate |
 | `upstreamUrl` | empty | Full URL of the first candidate, may include `user:pass`; overrides `upstreamHost`/`upstreamPort` when set; an invalid value is a hard error |
 | `gateways` | empty | Extra candidates, comma-separated `host:port` |
+| `discoverLocalProxy` | `true` | Linux local loopback proxy fallback discovery |
 | `preferDirect` | empty | Try direct first for these hosts, comma-separated, `*` glob |
 | `preferProxy` | empty | Try proxies first for these hosts, comma-separated, `*` glob |
 | `routeHostFetch` | `false` | Route the host's `fetch` through this proxy (enabled by the bundle patch) |
@@ -135,6 +137,7 @@ node bin/dsh-dual-proxy.js --listen-port 7898 --upstream-port 7897 \
 | `--upstream-port` | `7897` | Port of the first candidate |
 | `--upstream-url` | — | Full URL of the first candidate, may include `user:pass`; overrides host/port |
 | `--gateway` | — | Extra candidate, repeatable |
+| `--no-discover-local-proxy` | on | Disable local proxy fallback discovery |
 | `--prefer-direct` | empty | Try direct first for these hosts, comma-separated, `*` glob |
 | `--prefer-proxy` | empty | Try proxies first for these hosts, comma-separated, `*` glob |
 | `--health-url` | empty | Channel check URL |
@@ -148,7 +151,7 @@ node bin/dsh-dual-proxy.js --listen-port 7898 --upstream-port 7897 \
 | `--retry-non-idempotent-after-send` | off | Also replay `POST`/`PATCH` after the connection was established |
 | `--retry-non-idempotent-with-idempotency-key` | off | Allow post-send replay when `Idempotency-Key` is present |
 
-Environment variables use the same names (`LISTEN_HOST`, `LISTEN_PORT`, `PORT_FALLBACK`, `UPSTREAM_HOST`, `UPSTREAM_PORT`, `UPSTREAM_URL`, `GATEWAY`, `PREFER_DIRECT`, `PREFER_PROXY`, `HEALTH_URL`, `HEALTH_INTERVAL_MS`, `FAST_FAIL_MS`, `COOLDOWN_MS`, `ATTEMPT_TIMEOUT_MS`, `RESPONSE_TIMEOUT_MS`, `PREF_TTL_MS`, `VERIFY_TLS=0`, `RETRY_NON_IDEMPOTENT_AFTER_SEND=1`, `RETRY_NON_IDEMPOTENT_WITH_IDEMPOTENCY_KEY=1`).
+Environment variables use the same names (`LISTEN_HOST`, `LISTEN_PORT`, `PORT_FALLBACK`, `UPSTREAM_HOST`, `UPSTREAM_PORT`, `UPSTREAM_URL`, `GATEWAY`, `PREFER_DIRECT`, `PREFER_PROXY`, `DISCOVER_LOCAL_PROXY=0`, `HEALTH_URL`, `HEALTH_INTERVAL_MS`, `FAST_FAIL_MS`, `COOLDOWN_MS`, `ATTEMPT_TIMEOUT_MS`, `RESPONSE_TIMEOUT_MS`, `PREF_TTL_MS`, `VERIFY_TLS=0`, `RETRY_NON_IDEMPOTENT_AFTER_SEND=1`, `RETRY_NON_IDEMPOTENT_WITH_IDEMPOTENCY_KEY=1`).
 
 A systemd user-service template lives in `contrib/`.
 
@@ -183,6 +186,10 @@ The suite covers: HTTP direct fallback, forwarding through a fake proxy, skippin
 ## 0.7.3 behavior change
 
 Adds manual destination policy and changes cooling from a single gateway-level map to two tiers. With no rules the candidate order matches 0.7.2, but direct/TLS/header/reset cooling no longer crosses hosts; proxy-side failures remain global.
+
+## 0.8.0 behavior change
+
+Adds Linux local-loopback proxy fallback discovery. Discovery only adds candidates and does not change selection when known candidates work; per-target discovery only runs for 80/443 and non-private targets; direct HTTP 5xx is a target response and does not trigger discovery. When the DSH plugin changes ports it starts the new listener first, switches the fetch route, then closes the old listener; if a same-port rebuild fails it restores the last working configuration.
 
 ## Boundaries
 

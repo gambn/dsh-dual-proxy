@@ -34,6 +34,7 @@ export const Config = Schema.object({
   gateways: live(Schema.string().default('')),
   preferDirect: live(Schema.string().default('')),
   preferProxy: live(Schema.string().default('')),
+  discoverLocalProxy: live(Schema.boolean().default(true)),
   routeHostFetch: live(Schema.boolean().default(false)),
   healthUrl: live(Schema.string().default('https://api.deepseek.com')),
   healthIntervalMs: live(Schema.number().min(0).max(3600000).step(1000).default(60000)),
@@ -74,6 +75,7 @@ function plainConfig(config) {
     gateways: fieldValue(config, 'gateways', ''),
     preferDirect: fieldValue(config, 'preferDirect', ''),
     preferProxy: fieldValue(config, 'preferProxy', ''),
+    discoverLocalProxy: fieldValue(config, 'discoverLocalProxy', true),
     routeHostFetch: fieldValue(config, 'routeHostFetch', false),
     healthUrl: fieldValue(config, 'healthUrl', 'https://api.deepseek.com'),
     healthIntervalMs: fieldValue(config, 'healthIntervalMs', 60000),
@@ -102,71 +104,129 @@ function proxyUrl(addr) {
 export async function apply(ctx, config) {
   assertNode();
   let running = null;
+  let lastGood = null;
   let starting = null;
   let disposed = false;
 
   const log = (msg) => { try { ctx.logger?.info?.(msg); } catch (e) { /* ignore */ } };
   const error = (msg) => { try { ctx.logger?.error?.(msg); } catch (e) { /* ignore */ } };
 
-  const start = async () => {
-    if (disposed) return;
-    const base = plainConfig(config);
+  const prepare = (base) => {
     let upstream;
     try {
       upstream = resolveUpstream(base);
     } catch (err) {
       error('dsh-dual-proxy invalid upstreamUrl: ' + (err && err.message ? err.message : String(err)));
+      return null;
+    }
+    const { gateways: gatewayText, routeHostFetch, upstreamUrl, ...dispatcherConfig } = base;
+    dispatcherConfig.preferDirect = splitPatterns(dispatcherConfig.preferDirect);
+    dispatcherConfig.preferProxy = splitPatterns(dispatcherConfig.preferProxy);
+    dispatcherConfig.upstreamHost = upstream.host;
+    dispatcherConfig.upstreamPort = upstream.port;
+    if (upstream.auth) dispatcherConfig.upstreamAuth = upstream.auth;
+    if (!isLoopbackHost(dispatcherConfig.listenHost)) {
+      log('warning: dsh-dual-proxy listens on non-loopback ' + dispatcherConfig.listenHost + '; the proxy has no authentication');
+    }
+    const gateways = collectGateways({
+      upstream,
+      extra: extraGateways(gatewayText),
+      env: process.env,
+      self: { host: dispatcherConfig.listenHost, port: dispatcherConfig.listenPort },
+      onInvalid: (subject, reason) => log('gateway warning: ' + subject + ': ' + reason)
+    });
+    return { dispatcherConfig, gateways, routeHostFetch };
+  };
+
+  const build = async (spec) => {
+    const dispatcher = createDispatcher(Object.assign({}, spec.dispatcherConfig, {
+      gateways: spec.gateways,
+      log
+    }));
+    const addr = await dispatcher.listen();
+    return {
+      dispatcher,
+      addr,
+      url: proxyUrl(addr),
+      routeHostFetch: spec.routeHostFetch,
+      spec
+    };
+  };
+
+  const route = async (entry) => {
+    if (!entry.routeHostFetch) return;
+    await installFetchRoute(entry.url);
+    log('dsh-dual-proxy routes host fetch through ' + entry.url);
+  };
+
+  const startSamePort = async (spec, old) => {
+    // 同端口无法先建后拆：先关旧监听，再建新监听；失败时用上一次可用配置回滚。
+    if (running === old) running = null;
+    try { await old.dispatcher.close(); } catch (e) { /* ignore */ }
+    if (disposed) return;
+    try {
+      const entry = await build(spec);
+      if (disposed) { try { await entry.dispatcher.close(); } catch (e) { /* ignore */ } return; }
+      await route(entry);
+      if (!entry.routeHostFetch) uninstallFetchRoute();
+      running = entry;
+      entry.dispatcher.startHealth();
+      lastGood = spec;
+      log('dsh-dual-proxy listening on ' + entry.addr.address + ':' + entry.addr.port);
+    } catch (err) {
+      error('dsh-dual-proxy failed to listen: ' + (err && err.message ? err.message : String(err)));
+      if (!lastGood) return;
+      try {
+        const restored = await build(lastGood);
+        await route(restored);
+        if (!restored.routeHostFetch) uninstallFetchRoute();
+        running = restored;
+        restored.dispatcher.startHealth();
+        log('dsh-dual-proxy restoring the last working configuration on ' +
+          restored.addr.address + ':' + restored.addr.port);
+      } catch (restoreErr) {
+        error('dsh-dual-proxy could not restore the last working configuration: ' +
+          (restoreErr && restoreErr.message ? restoreErr.message : String(restoreErr)));
+      }
+    }
+  };
+
+  const startNewPort = async (spec, old) => {
+    // 换端口：新监听先起来，fetch 路由切换成功后才关旧监听。
+    const entry = await build(spec);
+    if (disposed) { try { await entry.dispatcher.close(); } catch (e) { /* ignore */ } return; }
+    try {
+      await route(entry);
+      if (!entry.routeHostFetch) uninstallFetchRoute();
+    } catch (err) {
+      try { await entry.dispatcher.close(); } catch (e) { /* ignore */ }
+      if (old && old.routeHostFetch) {
+        try { await installFetchRoute(old.url); } catch (e) { /* ignore */ }
+      }
+      error('dsh-dual-proxy could not route host fetch: ' + (err && err.message ? err.message : String(err)));
       return;
     }
+    running = entry;
+    if (old) {
+      try { await old.dispatcher.close(); } catch (e) { /* ignore */ }
+    }
+    entry.dispatcher.startHealth();
+    lastGood = spec;
+    log('dsh-dual-proxy listening on ' + entry.addr.address + ':' + entry.addr.port);
+  };
+
+  const start = async () => {
+    if (disposed) return;
+    const base = plainConfig(config);
+    const spec = prepare(base);
+    if (!spec) return;
+    const old = running;
+    const samePort = old && Number(old.addr.port) === Number(spec.dispatcherConfig.listenPort);
     try {
-      // 先把 fetch 还原，再换监听：中途失败时宿主还能走启动时的代理策略
-      uninstallFetchRoute();
-      if (running) {
-        const old = running;
-        running = null;
-        try { await old.close(); } catch (e) { /* ignore */ }
-      }
-      if (disposed) return;
-
-      const { gateways: gatewayText, routeHostFetch, upstreamUrl, ...dispatcherConfig } = base;
-      dispatcherConfig.preferDirect = splitPatterns(dispatcherConfig.preferDirect);
-      dispatcherConfig.preferProxy = splitPatterns(dispatcherConfig.preferProxy);
-      dispatcherConfig.upstreamHost = upstream.host;
-      dispatcherConfig.upstreamPort = upstream.port;
-      if (upstream.auth) dispatcherConfig.upstreamAuth = upstream.auth;
-      if (!isLoopbackHost(dispatcherConfig.listenHost)) {
-        log('warning: dsh-dual-proxy listens on non-loopback ' + dispatcherConfig.listenHost + '; the proxy has no authentication');
-      }
-      const gateways = collectGateways({
-        upstream,
-        extra: extraGateways(gatewayText),
-        env: process.env,
-        self: { host: dispatcherConfig.listenHost, port: dispatcherConfig.listenPort },
-        onInvalid: (subject, reason) => log('gateway warning: ' + subject + ': ' + reason)
-      });
-      const dispatcher = createDispatcher(Object.assign({}, dispatcherConfig, { gateways, log }));
-      const addr = await dispatcher.listen();
-      // listen 期间可能已经被释放：别把新实例挂上去
-      if (disposed) {
-        try { await dispatcher.close(); } catch (e) { /* ignore */ }
-        return;
-      }
-      running = dispatcher;
-
-      if (routeHostFetch) {
-        const url = proxyUrl(addr);
-        try {
-          await installFetchRoute(url);
-          if (disposed) return;
-          log('dsh-dual-proxy routes host fetch through ' + url);
-        } catch (err) {
-          error('dsh-dual-proxy could not route host fetch: ' + (err && err.message));
-        }
-      }
-      dispatcher.startHealth();
-      log('dsh-dual-proxy listening on ' + addr.address + ':' + addr.port);
+      if (samePort) await startSamePort(spec, old);
+      else await startNewPort(spec, old);
     } catch (err) {
-      error('dsh-dual-proxy failed to listen: ' + (err && err.message));
+      error('dsh-dual-proxy failed to listen: ' + (err && err.message ? err.message : String(err)));
     }
   };
 
@@ -197,7 +257,7 @@ export async function apply(ctx, config) {
       const current = running;
       running = null;
       if (current) {
-        try { await current.close(); } catch (e) { /* ignore */ }
+        try { await current.dispatcher.close(); } catch (e) { /* ignore */ }
       }
     }, 'dsh-dual-proxy.listener');
   }

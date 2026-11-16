@@ -118,6 +118,67 @@ test('生命周期：非回环绑定告警，fetch 路由随 dispose 还原', as
   assert.equal(isFetchRouteInstalled(), false);
 });
 
+async function waitFor(fn, timeoutMs = 2000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await fn()) return true;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  return false;
+}
+
+test('生命周期：换端口先建新监听，再释放旧监听', async () => {
+  const first = await closedPort();
+  const second = await closedPort();
+  const config = cfg(first);
+  const ctx = makeCtx();
+  await apply(ctx, config);
+  try {
+    assert.equal(await tryConnect(first), true);
+    config.listenPort = second;
+    ctx.emit('loader/volatile-update');
+    assert.equal(await waitFor(() => tryConnect(second)), true, '新端口应开始监听');
+    assert.equal(await tryConnect(first), false, '旧端口应释放');
+  } finally {
+    await ctx.dispose();
+  }
+});
+
+test('生命周期：换端口失败时旧监听继续服务', async () => {
+  const first = await closedPort();
+  const blocker = net.createServer();
+  await new Promise((resolve) => blocker.listen(0, '127.0.0.1', resolve));
+  const occupied = blocker.address().port;
+  const config = cfg(first);
+  const ctx = makeCtx();
+  try {
+    await apply(ctx, config);
+    config.listenPort = occupied;
+    ctx.emit('loader/volatile-update');
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    assert.equal(await tryConnect(first), true, '旧监听应保留');
+    assert.ok(ctx.errors.some((msg) => /failed to listen/.test(msg)));
+  } finally {
+    await ctx.dispose();
+    await new Promise((resolve) => blocker.close(resolve));
+  }
+});
+
+test('生命周期：同端口重建失败时恢复上一次可用配置', async () => {
+  const port = await closedPort();
+  const config = cfg(port);
+  const ctx = makeCtx();
+  await apply(ctx, config);
+  try {
+    config.listenHost = '192.0.2.1';
+    ctx.emit('loader/volatile-update');
+    assert.equal(await waitFor(() => ctx.info.some((msg) => msg.includes('restoring the last working configuration'))), true);
+    assert.equal(await tryConnect(port), true, '失败后应恢复旧监听');
+  } finally {
+    await ctx.dispose();
+  }
+});
+
 test('生命周期：注册清理时 context 已失活则不会监听', async () => {
   const port = await closedPort();
   const ctx = makeCtx();

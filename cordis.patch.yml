@@ -18,6 +18,8 @@
         # 人工目的地规则：逗号分隔，支持 * 通配；空表示不启用
         preferDirect: ''
         preferProxy: ''
+        # 已知候选全部失败/启动窗口内扫描本机回环代理；默认开启
+        discoverLocalProxy: true
         # 把宿主进程的 fetch（模型请求）引到本代理上
         routeHostFetch: true
         # 用真实请求验证“到模型端点”的通道；401/403 也算通

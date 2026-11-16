@@ -18,6 +18,8 @@ test('I20：重放/认证配置面在 Config/plainConfig/patch/两份 README/CLI
   assert.match(index, /preferProxy: live\(Schema\.string\(\)\.default\(''\)\)/);
   assert.match(index, /preferDirect: fieldValue\(config, 'preferDirect', ''\)/);
   assert.match(index, /preferProxy: fieldValue\(config, 'preferProxy', ''\)/);
+  assert.match(index, /discoverLocalProxy: live\(Schema\.boolean\(\)\.default\(true\)\)/);
+  assert.match(index, /discoverLocalProxy: fieldValue\(config, 'discoverLocalProxy', true\)/);
   assert.match(index, /retryNonIdempotentWithIdempotencyKey: live\(Schema\.boolean\(\)\.default\(false\)\)/);
   assert.match(index, /retryNonIdempotentWithIdempotencyKey: fieldValue\(config, 'retryNonIdempotentWithIdempotencyKey', false\)/);
 
@@ -27,6 +29,7 @@ test('I20：重放/认证配置面在 Config/plainConfig/patch/两份 README/CLI
   assert.match(patch, /portFallback: 0/);
   assert.match(patch, /preferDirect: ''/);
   assert.match(patch, /preferProxy: ''/);
+  assert.match(patch, /discoverLocalProxy: true/);
   assert.match(patch, /retryNonIdempotentWithIdempotencyKey: false/);
 
   const readme = read('../README.md');
@@ -47,6 +50,9 @@ test('I20：重放/认证配置面在 Config/plainConfig/patch/两份 README/CLI
     assert.match(doc, /preferProxy/);
     assert.match(doc, /--prefer-proxy/);
     assert.match(doc, /PREFER_PROXY/);
+    assert.match(doc, /discoverLocalProxy/);
+    assert.match(doc, /--no-discover-local-proxy/);
+    assert.match(doc, /DISCOVER_LOCAL_PROXY=0/);
     assert.match(doc, /retryNonIdempotentWithIdempotencyKey/);
     assert.match(doc, /--retry-non-idempotent-with-idempotency-key/);
     assert.match(doc, /RETRY_NON_IDEMPOTENT_WITH_IDEMPOTENCY_KEY=1/);
@@ -67,6 +73,8 @@ test('I20：重放/认证配置面在 Config/plainConfig/patch/两份 README/CLI
   assert.match(bin, /PREFER_DIRECT/);
   assert.match(bin, /--prefer-proxy/);
   assert.match(bin, /PREFER_PROXY/);
+  assert.match(bin, /--no-discover-local-proxy/);
+  assert.match(bin, /DISCOVER_LOCAL_PROXY/);
   assert.match(bin, /--retry-non-idempotent-with-idempotency-key/);
   assert.match(bin, /RETRY_NON_IDEMPOTENT_WITH_IDEMPOTENCY_KEY/);
 });

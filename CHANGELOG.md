@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.8.0
+
+### Added
+
+- Linux 本机回环代理兜底发现：启动、按目标失败、健康全失败三种触发；只扫 `/proc` 的回环/通配 LISTEN 端口，HTTP `<500 && !==407`、HTTPS `CONNECT` 2xx 判定；结果最多 8 条、TTL 5 分钟、成功使用/健康选中刷新，默认跳过 sibling。
+- `discoverLocalProxy` 配置、`--no-discover-local-proxy`、`DISCOVER_LOCAL_PROXY=0`；库层默认关闭，插件和 CLI 默认开启；`--print-config` 输出。
+- DSH 适配层换端口时先建新监听、fetch 路由切换成功后再关旧监听；同端口重建失败时恢复上一次可用配置。
+
+### Changed
+
+- 按目标发现只对 80/443、非回环/私网目标生效；自定义端口或私网模型端点需要显式 `--gateway`。
+- 直连 HTTP 5xx 视为目标响应，不触发发现；发现只覆盖建连/DNS/TLS/等响应头等候选失败。
+- 非幂等请求继续复用 `shouldRetryAfterSend`；CONNECT 200 前可重试、200 后不重试；发现不覆盖规则、不拉回冷却网关。
+
+### Notes
+
+- Node 门槛仍为 `>=22.19.0`，`undici` 仍为 8.12.3；DSH 的 `routeHostFetch` 依赖它的全局 dispatcher。
+- 本机发现只在 Linux 生效；非 Linux 行为与 0.7.3 一致。
+
 ## 0.7.3
 
 ### Added
